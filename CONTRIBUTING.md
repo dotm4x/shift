@@ -106,9 +106,8 @@ to the statement they protect.
 
 ## Workspace layout
 
-Keep dependencies and scripts in the project that uses them. See
-[packages/README.md](./packages/README.md) for workspace and TypeScript project configuration.
-Do not commit generated output, dependencies, or secrets.
+Keep dependencies and scripts in the project that uses them, and do not commit generated output,
+dependencies, or secrets.
 
 Workspace projects follow the same layout: TypeScript sources live under `source/`, configuration
 and tests sit next to that project's `package.json`, and each project owns its type-check
