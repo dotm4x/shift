@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "allowJs": true
+  },
+  "include": ["source/**/*.ts", "scripts/**/*.mjs"],
+  "exclude": ["**/node_modules", "**/dist", "**/build", "**/coverage"]
+}

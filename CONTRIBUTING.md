@@ -111,8 +111,10 @@ dependencies, or secrets.
 
 Workspace projects follow the same layout: TypeScript sources live under `source/`, configuration
 and tests sit next to that project's `package.json`, and each project owns its type-check
-configuration. The `sandbox/` project is a plain Node.js scratch space for trying code; do not
-turn it into a standalone application.
+configuration. Executables live under `apps/`: build the CLI with
+`pnpm --filter @livescript/cli build` and run it with `pnpm livescript <command>`, for example
+`pnpm livescript run sample.ls`. The `sandbox/` project is a plain Node.js scratch space for
+trying code; do not turn it into a standalone application.
 
 ## Commits
 

@@ -12,6 +12,7 @@
     "format:check": "prettier --check .",
     "format:files": "prettier --write",
     "typecheck": "pnpm -r --if-present typecheck",
+    "livescript": "node apps/cli/dist/main.js",
     "prepare": "husky"
   },
   "lint-staged": {

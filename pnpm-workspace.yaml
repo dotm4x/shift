@@ -1,6 +1,7 @@
 packages:
   - 'sandbox'
   - 'packages/*'
+  - 'apps/*'
 
 allowBuilds:
   esbuild: true
