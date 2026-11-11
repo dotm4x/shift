@@ -14,7 +14,8 @@ export interface CompileResult {
  * Runs the compiler pipeline over Livescript source text.
  *
  * @param source Livescript source text.
- * @returns Diagnostics of the pipeline and the generated LLVM IR.
+ * @returns Diagnostics of the pipeline and the generated LLVM IR, which is empty when the
+ * pipeline reports errors.
  */
 export function compile(source: string): CompileResult {
   const diagnostics = new DiagnosticBag()
@@ -22,6 +23,10 @@ export function compile(source: string): CompileResult {
 
   new Linter().lint(sourceFile, diagnostics)
   new Analyzer().analyze(sourceFile, diagnostics)
+
+  if (diagnostics.hasErrors) {
+    return { diagnostics, ir: '' }
+  }
 
   return { diagnostics, ir: new Generator().generate(sourceFile) }
 }

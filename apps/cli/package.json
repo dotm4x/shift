@@ -13,6 +13,7 @@
     "build": "node scripts/build.mjs",
     "compile": "pnpm --filter @livescript/compiler build && tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "commander": "^15.0.0"
   },
   "devDependencies": {
-    "@types/node": "^26.6.6"
+    "@types/node": "^26.6.6",
+    "vitest": "^5.1.0"
   }
 }
