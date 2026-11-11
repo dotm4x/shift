@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.pnpm-store/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Local editor and OS files
+.DS_Store
+*.swp
+
+# Editor/FUSE temp files
+.fuse_hidden*

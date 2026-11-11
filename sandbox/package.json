@@ -1,0 +1,16 @@
+{
+  "name": "@livescript/sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx source/main.ts",
+    "start": "tsx source/main.ts",
+    "watch": "tsx watch source/main.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15"
+  }
+}

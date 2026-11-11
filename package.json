@@ -1,0 +1,42 @@
+{
+  "name": "livescript",
+  "private": true,
+  "description": "An experimental programming language.",
+  "packageManager": "pnpm@12.18.0",
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "lint": "pnpm build && eslint .",
+    "lint:fix": "pnpm build && eslint . --fix",
+    "lint:files": "eslint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "format:files": "prettier --write",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{js,cjs,mjs,ts,cts,mts}": [
+      "prettier --write",
+      "eslint --fix"
+    ],
+    "*.{json,jsonc,md,yml,yaml}": "prettier --write"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.4",
+    "@commitlint/config-conventional": "^21.2.4",
+    "@eslint/js": "^10.0.1",
+    "@stylistic/eslint-plugin": "5.10.0",
+    "@typescript-eslint/parser": "8.72.1",
+    "eslint": "^10.14.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "eslint-plugin-import-x": "^4.18.0",
+    "eslint-plugin-perfectionist": "5.13.0",
+    "globals": "^17.14.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
+    "prettier": "^3.9.10",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.1"
+  }
+}
