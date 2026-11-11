@@ -11,6 +11,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "format:files": "prettier --write",
+    "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
     "livescript": "node apps/cli/dist/main.js",
     "prepare": "husky"

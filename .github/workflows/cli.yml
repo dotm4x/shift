@@ -1,0 +1,59 @@
+name: CLI
+
+on:
+  push:
+    paths:
+      - 'apps/cli/**'
+      - 'packages/compiler/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/cli.yml'
+  pull_request:
+    paths:
+      - 'apps/cli/**'
+      - 'packages/compiler/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/cli.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cli:
+    name: CLI checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.18.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter @livescript/cli build
+
+      - name: Test
+        run: pnpm --filter @livescript/cli test
+
+      - name: Smoke test
+        run: |
+          printf 'print("ci")\nprint(41 + 1)\n' > sample.ls
+          node apps/cli/dist/main.js build sample.ls -o sample
+          ./sample
+          node apps/cli/dist/main.js run sample.ls
