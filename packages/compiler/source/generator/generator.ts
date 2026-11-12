@@ -123,9 +123,10 @@ interface GenerationContext {
   readonly entryName: string
   finallyContexts: FinallyContext[]
   readonly functions: Map<string, FunctionSignature>
-  readonly globals: ReadonlySet<string>
+  readonly globals: Set<string>
   handlerDepth: number
   readonly labels: Map<string, LoopContext>
+  readonly genericClasses: Map<string, ts.ClassDeclaration>
   readonly objectLiterals: Map<LlvmOperand, ts.ObjectLiteralExpression>
   readonly objectDeclarations: Map<string, ts.ObjectLiteralExpression>
   loops: LoopContext[]
@@ -133,6 +134,7 @@ interface GenerationContext {
   panicEmitted: boolean
   pendingLabel: string | undefined
   returnType: Type | undefined
+  arrowCounter: number
   currentFunction: string | undefined
   readonly scopes: Map<string, VariableSlot>[]
   readonly sourceClasses: Map<string, ts.ClassDeclaration>
@@ -163,11 +165,13 @@ export class Generator {
    */
   public generate(sourceFile: ts.SourceFile, options: GeneratorOptions = {}): string {
     const context: GenerationContext = {
+      arrowCounter: 0,
       builtins: new Map<string, Builtin>(
         (options.builtins ?? defaultBuiltins).map((builtin) => [builtin.name, builtin]),
       ),
       classes: new Map<string, ClassInfo>(),
       entryName: options.entryName ?? 'main',
+      genericClasses: new Map<string, ts.ClassDeclaration>(),
       finallyContexts: [],
       functions: new Map<string, FunctionSignature>(),
       globals: new Set<string>(options.globals ?? []),
@@ -260,6 +264,7 @@ export class Generator {
         vtable: [],
       })
       context.sourceClasses.set(name, statement)
+      context.genericClasses.set(name, statement)
     }
 
     for (const info of context.classes.values()) {
@@ -467,6 +472,16 @@ export class Generator {
       }
 
       const parameterName = parameterNameOf(parameter)
+
+      if (parameter.dotDotDotToken !== undefined) {
+        const restPointer = builder.alloca('ptr', parameterName)
+
+        builder.store('ptr', { kind: 'local', name: parameterName }, restPointer)
+        this.declareVariable(parameterName, restPointer, parameterType, context)
+
+        return
+      }
+
       const pointer = builder.alloca(irTypeFromType(parameterType), parameterName)
 
       builder.store(irTypeFromType(parameterType), { kind: 'local', name: parameterName }, pointer)
@@ -670,6 +685,12 @@ export class Generator {
       return
     }
 
+    if (ts.isImportDeclaration(node)) {
+      this.generateImport(node, context)
+
+      return
+    }
+
     if (ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) {
       return
     }
@@ -695,6 +716,36 @@ export class Generator {
       `Unsupported statement: ${ts.SyntaxKind[node.kind]}.`,
       node,
     )
+  }
+
+  /**
+   * Generates an import declaration by declaring its bindings as external symbols.
+   */
+  private generateImport(node: ts.ImportDeclaration, context: GenerationContext): void {
+    const moduleSpecifier = node.moduleSpecifier
+
+    if (!ts.isStringLiteral(moduleSpecifier)) {
+      throw new CompilerError('unsupported', 'Imports require a string specifier.', node)
+    }
+
+    const importClause = node.importClause
+
+    if (importClause === undefined) {
+      return
+    }
+
+    const bindings = importClause.namedBindings
+
+    if (bindings === undefined || !ts.isNamedImports(bindings)) {
+      throw new CompilerError('unsupported', 'Imports require named bindings.', node)
+    }
+
+    for (const element of bindings.elements) {
+      const name = element.name.text
+
+      context.module.addDeclaration(`@${name} = external global ptr`)
+      context.globals.add(name)
+    }
   }
 
   /**
@@ -790,6 +841,140 @@ export class Generator {
 
     builder.startBlock(panicLabel)
     this.panic('unhandled exception', builder, context)
+  }
+
+  /**
+   * Generates a typeof expression as a runtime type string.
+   */
+  private generateTypeOf(
+    node: ts.TypeOfExpression,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): ExpressionResult {
+    const value = this.generateExpression(node.expression, builder, context)
+    const typeName = runtimeTypeNameOf(value.type)
+    const pointer = this.stringPointer(typeName, builder, context)
+
+    return { literalValue: undefined, operand: pointer, type: stringType }
+  }
+
+  /**
+   * Generates an arrow function as a nested function value.
+   */
+  private generateArrowFunction(
+    node: ts.ArrowFunction,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): ExpressionResult {
+    const name = `${context.currentFunction ?? context.entryName}.arrow.${String(context.arrowCounter)}`
+    context.arrowCounter++
+    const signature = this.arrowSignatureOf(node, name)
+    context.functions.set(name, signature)
+
+    const nestedBuilder = context.module.addFunction(
+      signature,
+      node.parameters.map((parameter) => parameterNameOf(parameter)),
+    )
+    const previousReturnType = context.returnType
+    const previousFunction = context.currentFunction
+
+    context.returnType = signature.returnType
+    context.currentFunction = name
+    context.scopes.push(new Map<string, VariableSlot>())
+
+    node.parameters.forEach((parameter, index) => {
+      const parameterType = signature.parameterTypes[index]
+
+      if (parameterType === undefined) {
+        throw new CompilerError(
+          'missing-annotation',
+          `Parameter '${parameterNameOf(parameter)}' has no type.`,
+          node,
+        )
+      }
+
+      const parameterName = parameterNameOf(parameter)
+      const pointer = nestedBuilder.alloca(irTypeFromType(parameterType), parameterName)
+
+      nestedBuilder.store(
+        irTypeFromType(parameterType),
+        { kind: 'local', name: parameterName },
+        pointer,
+      )
+      this.declareVariable(parameterName, pointer, parameterType, context)
+    })
+
+    const body = node.body
+
+    if (!ts.isBlock(body)) {
+      const value = this.generateExpression(body, nestedBuilder, context)
+
+      if (isVoidType(signature.returnType)) {
+        nestedBuilder.returnVoid()
+      } else {
+        nestedBuilder.returnValue(irTypeFromType(signature.returnType), value.operand)
+      }
+    } else {
+      this.generateStatement(body, nestedBuilder, context)
+    }
+
+    if (!nestedBuilder.terminated) {
+      if (isVoidType(signature.returnType)) {
+        nestedBuilder.returnVoid()
+      } else {
+        nestedBuilder.unreachable()
+      }
+    }
+
+    context.scopes.pop()
+    context.returnType = previousReturnType
+    context.currentFunction = previousFunction
+
+    const pointer = builder.alloca('ptr', 'arrow')
+    builder.store('ptr', { kind: 'constant', type: 'ptr', text: `@${name}` }, pointer)
+
+    return {
+      literalValue: undefined,
+      operand: builder.load('ptr', pointer),
+      type: {
+        kind: 'function',
+        parameters: signature.parameterTypes.map((parameterType, index) => ({
+          name: `p${String(index)}`,
+          type: parameterType,
+          optional: false,
+        })),
+        returnType: signature.returnType,
+      },
+    }
+  }
+
+  /**
+   * Builds the signature of an arrow function.
+   */
+  private arrowSignatureOf(node: ts.ArrowFunction, name: string): FunctionSignature {
+    if (node.type === undefined) {
+      throw new CompilerError(
+        'missing-annotation',
+        `Arrow function '${name}' requires a return type annotation.`,
+        node,
+      )
+    }
+
+    return {
+      name,
+      parameterTypes: node.parameters.map((parameter) => {
+        if (parameter.type === undefined) {
+          throw new CompilerError(
+            'missing-annotation',
+            `Parameter '${parameterNameOf(parameter)}' of arrow function '${name}' requires a type annotation.`,
+            parameter,
+          )
+        }
+
+        return typeFromNode(parameter.type)
+      }),
+      returnType: typeFromNode(node.type),
+    }
   }
 
   /**
@@ -1969,6 +2154,14 @@ export class Generator {
       return this.generateTemplateExpression(node, builder, context)
     }
 
+    if (ts.isArrowFunction(node)) {
+      return this.generateArrowFunction(node, builder, context)
+    }
+
+    if (ts.isTypeOfExpression(node)) {
+      return this.generateTypeOf(node, builder, context)
+    }
+
     if (ts.isNewExpression(node)) {
       return this.generateNew(node, builder, context)
     }
@@ -1981,6 +2174,10 @@ export class Generator {
       const expression = this.generateExpression(node.expression, builder, context)
 
       return this.castTo(node, expression, typeFromNode(node.type), builder)
+    }
+
+    if (ts.isNonNullExpression(node)) {
+      return this.generateExpression(node.expression, builder, context)
     }
 
     if (ts.isParenthesizedExpression(node)) {
@@ -2014,6 +2211,12 @@ export class Generator {
 
     if (isAssignmentOperator(operator)) {
       return this.generateAssignment(node, operator, builder, context)
+    }
+
+    if (operator === ts.SyntaxKind.InstanceOfKeyword) {
+      const left = this.generateExpression(node.left, builder, context)
+
+      return this.generateInstanceOf(node, left, node.right, builder, context)
     }
 
     let left = this.generateExpression(node.left, builder, context)
@@ -2095,6 +2298,51 @@ export class Generator {
       `Unsupported operands for '${ts.SyntaxKind[operator]}'.`,
       node,
     )
+  }
+
+  /**
+   * Generates an instanceof check by comparing vtable pointers.
+   */
+  private generateInstanceOf(
+    node: ts.BinaryExpression,
+    left: ExpressionResult,
+    right: ts.Expression,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): ExpressionResult {
+    if (!ts.isIdentifier(right)) {
+      throw new CompilerError(
+        'type-mismatch',
+        'The right operand of instanceof must be a class.',
+        node,
+      )
+    }
+
+    const className = right.text
+
+    if (!context.classes.has(className)) {
+      throw new CompilerError('unknown-name', `Unknown class '${className}'.`, node)
+    }
+
+    if (!isReferenceType(left.type) && left.type.kind !== 'unknown') {
+      throw new CompilerError(
+        'type-mismatch',
+        'The left operand of instanceof must be an object.',
+        node,
+      )
+    }
+
+    const vtablePointer = builder.load(
+      'ptr',
+      builder.fieldPointer(`%${className}`, left.operand, 0),
+    )
+    const matches = builder.binary('ptr', 'icmp eq', vtablePointer, {
+      kind: 'constant',
+      type: 'ptr',
+      text: `@${className}.vt`,
+    })
+
+    return { literalValue: undefined, operand: matches, type: booleanType }
   }
 
   /**
@@ -2822,22 +3070,40 @@ export class Generator {
     context: GenerationContext,
   ): ExpressionResult {
     const base = this.generateExpression(node.expression, builder, context)
-
-    if (base.type.kind !== 'unknown') {
-      return this.generateMemberAccess(node, builder, context)
-    }
-
     const resultPointer = builder.alloca('ptr', 'optional')
     const endLabel = builder.reserveLabel('optional.end')
     const nullLabel = builder.reserveLabel('optional.null')
+    const accessLabel = builder.reserveLabel('optional.access')
 
+    if (base.type.kind === 'primitive' && base.type.name === 'null') {
+      const isNull = builder.binary('ptr', 'icmp eq', base.operand, {
+        kind: 'constant',
+        type: 'ptr',
+        text: 'null',
+      })
+
+      builder.branch(isNull, nullLabel, accessLabel)
+    } else {
+      builder.jump(accessLabel)
+    }
+
+    builder.startBlock(nullLabel)
     builder.store('ptr', { kind: 'constant', type: 'ptr', text: 'null' }, resultPointer)
     builder.jump(endLabel)
-    builder.startBlock(nullLabel)
+
+    builder.startBlock(accessLabel)
+    const address = this.generateFieldAddress(node, builder, context)
+    const value = builder.load(irTypeFromType(address.type), address.pointer)
+
+    builder.store(irTypeFromType(address.type), value, resultPointer)
     builder.jump(endLabel)
     builder.startBlock(endLabel)
 
-    return { literalValue: undefined, operand: builder.load('ptr', resultPointer), type: nullType }
+    return {
+      literalValue: undefined,
+      operand: builder.load('ptr', resultPointer),
+      type: address.type,
+    }
   }
 
   /**
@@ -4489,6 +4755,7 @@ export class Generator {
     context: GenerationContext,
   ): LlvmLocal {
     context.module.addDeclaration('declare ptr @GC_malloc(i64)')
+    context.module.addDeclaration('declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)')
     const pointer = builder.call('ptr', 'GC_malloc', [
       { type: 'i64', value: { kind: 'constant', type: 'i64', text: String(bytes) } },
     ])
@@ -4822,6 +5089,33 @@ export class Generator {
       this.popHandler(builder, context)
     }
   }
+}
+
+/**
+ * Returns the runtime type name of a type.
+ */
+function runtimeTypeNameOf(type: Type): string {
+  if (type.kind === 'primitive') {
+    return type.name
+  }
+
+  if (type.kind === 'array') {
+    return 'array'
+  }
+
+  if (type.kind === 'reference') {
+    return type.name
+  }
+
+  if (type.kind === 'function') {
+    return 'function'
+  }
+
+  if (type.kind === 'object') {
+    return 'object'
+  }
+
+  return type.kind
 }
 
 /**

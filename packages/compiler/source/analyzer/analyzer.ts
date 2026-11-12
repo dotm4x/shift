@@ -60,6 +60,7 @@ export class Analyzer {
     this.collect(sourceFile, globalScope, context)
     this.resolveReferences(context)
     this.resolveTypeReferences(context)
+    this.reportConstAssignments(context)
     this.reportUnusedSymbols(context)
 
     return globalScope
@@ -118,7 +119,7 @@ export class Analyzer {
       if (ts.isIdentifier(node.name)) {
         this.declareSymbol(
           current,
-          new Symbol(node.name.text, 'variable', node, blockScoped),
+          new Symbol(node.name.text, 'variable', node, blockScoped, !isConstDeclaration(node)),
           context,
         )
 
@@ -130,7 +131,13 @@ export class Analyzer {
           if (ts.isBindingElement(element) && ts.isIdentifier(element.name)) {
             this.declareSymbol(
               current,
-              new Symbol(element.name.text, 'variable', element, blockScoped),
+              new Symbol(
+                element.name.text,
+                'variable',
+                element,
+                blockScoped,
+                !isConstDeclaration(node),
+              ),
               context,
             )
           }
@@ -207,6 +214,37 @@ export class Analyzer {
             ? { start: 0, end: 0, line: 0, column: 0 }
             : rangeOf(symbol.declaration, context.sourceFile),
       })
+    }
+  }
+
+  /**
+   * Reports every assignment to an immutable symbol.
+   */
+  private reportConstAssignments(context: CollectionContext): void {
+    for (const reference of context.references) {
+      const parent = reference.identifier.parent
+
+      if (
+        !ts.isBinaryExpression(parent) ||
+        parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+      ) {
+        continue
+      }
+
+      if (parent.left !== reference.identifier) {
+        continue
+      }
+
+      const symbol = reference.scope.resolve(reference.identifier.text)
+
+      if (symbol !== undefined && !symbol.mutable) {
+        context.diagnostics.add({
+          code: 'no-const-assignment',
+          message: `Identifier '${symbol.name}' is declared as const and cannot be reassigned.`,
+          severity: 'error',
+          range: rangeOf(reference.identifier, context.sourceFile),
+        })
+      }
     }
   }
 
@@ -378,6 +416,19 @@ function isTypeReference(node: ts.Node): node is ts.Identifier {
   return (
     ts.isIdentifier(node) && ts.isTypeReferenceNode(node.parent) && node.parent.typeName === node
   )
+}
+
+/**
+ * Determines whether a variable declaration is declared with `const`.
+ */
+function isConstDeclaration(node: ts.VariableDeclaration): boolean {
+  const list = node.parent
+
+  if (!ts.isVariableDeclarationList(list)) {
+    return false
+  }
+
+  return (list.flags & ts.NodeFlags.Const) !== 0
 }
 
 /**

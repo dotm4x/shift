@@ -23,12 +23,14 @@ export class Symbol {
    * @param kind Kind of declaration.
    * @param declaration Node that declares the symbol, or `undefined` for builtins.
    * @param blockScoped Whether the declaration is limited to its block, like `let` or `class`.
+   * @param mutable Whether the symbol can be reassigned. Defaults to `true`.
    */
   public constructor(
     public readonly name: string,
     public readonly kind: SymbolKind,
     public readonly declaration: ts.Declaration | undefined,
     public readonly blockScoped: boolean,
+    public readonly mutable: boolean = true,
   ) {}
 
   /** References resolved to this symbol, in source order. */
