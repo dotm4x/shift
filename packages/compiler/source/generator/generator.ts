@@ -17,6 +17,7 @@ import {
   voidType,
 } from '../analyzer/types/type.js'
 import { type Builtin, defaultBuiltins } from '../shared/builtins.js'
+import { CompilerError } from '../shared/compiler-error.js'
 
 import { type CallArgument, type FunctionSignature, type LlvmFunction } from './function.js'
 import { LlvmModule } from './module.js'
@@ -201,7 +202,11 @@ export class Generator {
           const memberName = memberNameOf(member.name)
 
           if (member.type === undefined) {
-            throw new Error(`Field '${memberName}' of class '${name}' requires a type annotation.`)
+            throw new CompilerError(
+              'missing-annotation',
+              `Field '${memberName}' of class '${name}' requires a type annotation.`,
+              member,
+            )
           }
 
           fields.push({
@@ -245,7 +250,7 @@ export class Generator {
         const classInfo = context.classes.get(current)
 
         if (classInfo === undefined) {
-          throw new Error(`Unknown class '${current}'.`)
+          throw new CompilerError('unknown-name', `Unknown class '${current}'.`, undefined)
         }
 
         chain.unshift(current)
@@ -259,7 +264,7 @@ export class Generator {
         const classInfo = context.classes.get(className)
 
         if (classInfo === undefined) {
-          throw new Error(`Unknown class '${className}'.`)
+          throw new CompilerError('unknown-name', `Unknown class '${className}'.`, undefined)
         }
 
         for (const field of classInfo.fields) {
@@ -322,23 +327,37 @@ export class Generator {
    */
   private signatureOf(declaration: ts.FunctionDeclaration, name: string): FunctionSignature {
     if (declaration.type === undefined) {
-      throw new Error(`Function '${name}' requires a return type annotation.`)
+      throw new CompilerError(
+        'missing-annotation',
+        `Function '${name}' requires a return type annotation.`,
+        declaration,
+      )
     }
 
     return {
       name,
       parameterTypes: declaration.parameters.map((parameter) => {
         if (parameter.dotDotDotToken !== undefined) {
-          throw new Error(`Rest parameters are not supported yet in function '${name}'.`)
+          throw new CompilerError(
+            'unsupported',
+            `Rest parameters are not supported yet in function '${name}'.`,
+            parameter,
+          )
         }
 
         if (parameter.questionToken !== undefined) {
-          throw new Error(`Optional parameters are not supported yet in function '${name}'.`)
+          throw new CompilerError(
+            'unsupported',
+            `Optional parameters are not supported yet in function '${name}'.`,
+            parameter,
+          )
         }
 
         if (parameter.type === undefined) {
-          throw new Error(
+          throw new CompilerError(
+            'missing-annotation',
             `Parameter '${parameterNameOf(parameter)}' of function '${name}' requires a type annotation.`,
+            declaration,
           )
         }
 
@@ -398,11 +417,11 @@ export class Generator {
     const signature = context.functions.get(name)
 
     if (signature === undefined) {
-      throw new Error(`Unknown function '${name}'.`)
+      throw new CompilerError('unknown-name', `Unknown function '${name}'.`, declaration)
     }
 
     if (declaration.body === undefined) {
-      throw new Error(`Function '${name}' requires a body.`)
+      throw new CompilerError('unsupported', `Function '${name}' requires a body.`, declaration)
     }
 
     const builder = context.module.addFunction(
@@ -416,7 +435,11 @@ export class Generator {
       const parameterType = signature.parameterTypes[index]
 
       if (parameterType === undefined) {
-        throw new Error(`Parameter '${parameterNameOf(parameter)}' has no type.`)
+        throw new CompilerError(
+          'missing-annotation',
+          `Parameter '${parameterNameOf(parameter)}' has no type.`,
+          declaration,
+        )
       }
 
       const parameterName = parameterNameOf(parameter)
@@ -453,7 +476,11 @@ export class Generator {
     const body = declaration.body
 
     if (body === undefined) {
-      throw new Error(`Method '${methodName}' of class '${className}' requires a body.`)
+      throw new CompilerError(
+        'unsupported',
+        `Method '${methodName}' of class '${className}' requires a body.`,
+        declaration,
+      )
     }
 
     const builder = context.module.addFunction(signature, [
@@ -473,7 +500,11 @@ export class Generator {
       const parameterType = signature.parameterTypes[index + 1]
 
       if (parameterType === undefined) {
-        throw new Error(`Parameter '${parameterNameOf(parameter)}' has no type.`)
+        throw new CompilerError(
+          'missing-annotation',
+          `Parameter '${parameterNameOf(parameter)}' has no type.`,
+          declaration,
+        )
       }
 
       const parameterName = parameterNameOf(parameter)
@@ -611,14 +642,18 @@ export class Generator {
     }
 
     if (ts.isFunctionDeclaration(node)) {
-      throw new Error('Nested functions are not supported yet.')
+      throw new CompilerError('unsupported', 'Nested functions are not supported yet.', node)
     }
 
     if (ts.isClassDeclaration(node)) {
-      throw new Error('Nested classes are not supported yet.')
+      throw new CompilerError('unsupported', 'Nested classes are not supported yet.', node)
     }
 
-    throw new Error(`Unsupported statement: ${ts.SyntaxKind[node.kind]}.`)
+    throw new CompilerError(
+      'unsupported',
+      `Unsupported statement: ${ts.SyntaxKind[node.kind]}.`,
+      node,
+    )
   }
 
   /**
@@ -630,7 +665,11 @@ export class Generator {
     context: GenerationContext,
   ): void {
     if (!ts.isIdentifier(declaration.name)) {
-      throw new Error('Variable declarations require a simple name.')
+      throw new CompilerError(
+        'unsupported',
+        'Variable declarations require a simple name.',
+        declaration,
+      )
     }
 
     const name = declaration.name.text
@@ -642,18 +681,22 @@ export class Generator {
 
     if (type === undefined) {
       if (result === undefined) {
-        throw new Error(`Variable '${name}' requires a type annotation or an initializer.`)
+        throw new CompilerError(
+          'missing-annotation',
+          `Variable '${name}' requires a type annotation or an initializer.`,
+          declaration,
+        )
       }
 
       type = result.type
     }
 
     if (result !== undefined) {
-      result = this.adaptTo(result, type, builder, context)
+      result = this.adaptTo(declaration, result, type, builder, context)
     }
 
     const pointer = builder.alloca(irTypeFromType(type), name)
-    const value = result === undefined ? this.defaultValueOf(type) : result.operand
+    const value = result === undefined ? this.defaultValueOf(declaration, type) : result.operand
 
     builder.store(irTypeFromType(type), value, pointer)
     this.declareVariable(name, pointer, type, context)
@@ -670,7 +713,7 @@ export class Generator {
     const condition = this.generateExpression(node.expression, builder, context)
 
     if (!isBooleanType(condition.type)) {
-      throw new Error('If conditions must be boolean.')
+      throw new CompilerError('type-mismatch', 'If conditions must be boolean.', node)
     }
 
     const thenLabel = builder.reserveLabel('if.then')
@@ -716,7 +759,7 @@ export class Generator {
     const condition = this.generateExpression(node.expression, builder, context)
 
     if (!isBooleanType(condition.type)) {
-      throw new Error('While conditions must be boolean.')
+      throw new CompilerError('type-mismatch', 'While conditions must be boolean.', node)
     }
 
     builder.branch(condition.operand, bodyLabel, endLabel)
@@ -766,7 +809,7 @@ export class Generator {
     const condition = this.generateExpression(node.expression, builder, context)
 
     if (!isBooleanType(condition.type)) {
-      throw new Error('Do-while conditions must be boolean.')
+      throw new CompilerError('type-mismatch', 'Do-while conditions must be boolean.', node)
     }
 
     builder.branch(condition.operand, bodyLabel, endLabel)
@@ -806,7 +849,7 @@ export class Generator {
       const condition = this.generateExpression(node.condition, builder, context)
 
       if (!isBooleanType(condition.type)) {
-        throw new Error('For conditions must be boolean.')
+        throw new CompilerError('type-mismatch', 'For conditions must be boolean.', node)
       }
 
       builder.branch(condition.operand, bodyLabel, endLabel)
@@ -851,20 +894,24 @@ export class Generator {
       !ts.isVariableDeclarationList(node.initializer) ||
       node.initializer.declarations.length !== 1
     ) {
-      throw new Error('For-of loops require a single variable declaration.')
+      throw new CompilerError(
+        'type-mismatch',
+        'For-of loops require a single variable declaration.',
+        node,
+      )
     }
 
     const declaration = node.initializer.declarations[0]
 
     if (declaration === undefined || !ts.isIdentifier(declaration.name)) {
-      throw new Error('For-of loops require a simple variable name.')
+      throw new CompilerError('type-mismatch', 'For-of loops require a simple variable name.', node)
     }
 
     const array = this.generateExpression(node.expression, builder, context)
     const arrayType = array.type
 
     if (!isArrayType(arrayType)) {
-      throw new Error('For-of loops require an array.')
+      throw new CompilerError('type-mismatch', 'For-of loops require an array.', node)
     }
 
     context.scopes.push(new Map<string, VariableSlot>())
@@ -929,7 +976,11 @@ export class Generator {
     const discriminant = this.generateExpression(node.expression, builder, context)
 
     if (!isNumericType(discriminant.type) && !isBooleanType(discriminant.type)) {
-      throw new Error('Switch expressions must be numbers or booleans.')
+      throw new CompilerError(
+        'type-mismatch',
+        'Switch expressions must be numbers or booleans.',
+        node,
+      )
     }
 
     const discriminantType = irTypeFromType(discriminant.type)
@@ -953,10 +1004,14 @@ export class Generator {
 
       const clause = body.clause
       const caseValue = this.generateExpression(clause.expression, builder, context)
-      const adapted = this.adaptTo(caseValue, discriminant.type, builder, context)
+      const adapted = this.adaptTo(node, caseValue, discriminant.type, builder, context)
 
       if (!sameType(adapted.type, discriminant.type)) {
-        throw new Error('Case values must match the switch expression type.')
+        throw new CompilerError(
+          'type-mismatch',
+          'Case values must match the switch expression type.',
+          node,
+        )
       }
 
       const matchLabel = builder.reserveLabel('switch.check')
@@ -994,7 +1049,7 @@ export class Generator {
       const body = bodies[index]
 
       if (body === undefined) {
-        throw new Error('Switch body is missing.')
+        throw new CompilerError('invalid-operation', 'Switch body is missing.', node)
       }
 
       builder.startBlock(body.label)
@@ -1031,7 +1086,7 @@ export class Generator {
       !ts.isForStatement(node.statement) &&
       !ts.isForOfStatement(node.statement)
     ) {
-      throw new Error('Only loops can be labeled.')
+      throw new CompilerError('unsupported', 'Only loops can be labeled.', node)
     }
 
     context.pendingLabel = node.label.text
@@ -1049,14 +1104,14 @@ export class Generator {
     context: GenerationContext,
   ): void {
     if (context.returnType === undefined) {
-      throw new Error('Return outside of a function is not supported.')
+      throw new CompilerError('unsupported', 'Return outside of a function is not supported.', node)
     }
 
     let value: ExpressionResult | undefined
 
     if (node.expression !== undefined) {
       value = this.generateExpression(node.expression, builder, context)
-      value = this.adaptTo(value, context.returnType, builder, context)
+      value = this.adaptTo(node, value, context.returnType, builder, context)
     }
 
     const finallyContext = context.finallyContexts[context.finallyContexts.length - 1]
@@ -1066,7 +1121,7 @@ export class Generator {
 
       if (node.expression === undefined) {
         if (!isVoidType(context.returnType)) {
-          throw new Error('The function must return a value.')
+          throw new CompilerError('invalid-operation', 'The function must return a value.', node)
         }
 
         builder.returnVoid()
@@ -1075,7 +1130,7 @@ export class Generator {
       }
 
       if (value === undefined) {
-        throw new Error('The returned value is missing.')
+        throw new CompilerError('invalid-operation', 'The returned value is missing.', node)
       }
 
       builder.returnValue(irTypeFromType(context.returnType), value.operand)
@@ -1085,15 +1140,15 @@ export class Generator {
 
     if (node.expression === undefined) {
       if (!isVoidType(context.returnType)) {
-        throw new Error('The function must return a value.')
+        throw new CompilerError('invalid-operation', 'The function must return a value.', node)
       }
     } else {
       if (value === undefined) {
-        throw new Error('The returned value is missing.')
+        throw new CompilerError('invalid-operation', 'The returned value is missing.', node)
       }
 
       if (finallyContext.returnPointer === undefined) {
-        throw new Error('The function must not return a value.')
+        throw new CompilerError('type-mismatch', 'The function must not return a value.', node)
       }
 
       builder.store(finallyContext.returnType, value.operand, finallyContext.returnPointer)
@@ -1111,10 +1166,10 @@ export class Generator {
     builder: LlvmFunction,
     context: GenerationContext,
   ): void {
-    const loop = this.loopOf(node.label?.text, context)
+    const loop = this.loopOf(node, node.label?.text, context)
 
     if (loop === undefined) {
-      throw new Error('Break outside of a loop.')
+      throw new CompilerError('invalid-operation', 'Break outside of a loop.', node)
     }
 
     this.exitToLoop(loop, context, builder)
@@ -1143,10 +1198,10 @@ export class Generator {
     builder: LlvmFunction,
     context: GenerationContext,
   ): void {
-    const loop = this.loopOf(node.label?.text, context)
+    const loop = this.loopOf(node, node.label?.text, context)
 
     if (loop === undefined) {
-      throw new Error('Continue outside of a loop.')
+      throw new CompilerError('invalid-operation', 'Continue outside of a loop.', node)
     }
 
     this.exitToLoop(loop, context, builder)
@@ -1199,7 +1254,7 @@ export class Generator {
     const returned = builder.call('i32', 'setjmp', [{ type: 'ptr', value: buffer }])
 
     if (returned === undefined) {
-      throw new Error('The setjmp call failed.')
+      throw new CompilerError('invalid-operation', 'The setjmp call failed.', node)
     }
 
     const caught = builder.binary('i32', 'icmp ne', returned, {
@@ -1233,11 +1288,11 @@ export class Generator {
         const declaration = catchClause.variableDeclaration
 
         if (!ts.isIdentifier(declaration.name)) {
-          throw new Error('Catch bindings require a simple name.')
+          throw new CompilerError('unsupported', 'Catch bindings require a simple name.', node)
         }
 
         if (declaration.type !== undefined && !isStringType(typeFromNode(declaration.type))) {
-          throw new Error('Catch bindings must be strings.')
+          throw new CompilerError('type-mismatch', 'Catch bindings must be strings.', node)
         }
 
         const pointer = builder.alloca('ptr', declaration.name.text)
@@ -1362,7 +1417,7 @@ export class Generator {
 
     if (node.kind === ts.SyntaxKind.ThisKeyword) {
       if (context.thisPointer === undefined || context.thisType === undefined) {
-        throw new Error('This outside of a class is not supported.')
+        throw new CompilerError('unsupported', 'This outside of a class is not supported.', node)
       }
 
       return {
@@ -1373,7 +1428,7 @@ export class Generator {
     }
 
     if (ts.isIdentifier(node)) {
-      const slot = this.lookupVariable(node.text, context)
+      const slot = this.lookupVariable(node, node.text, context)
 
       return {
         literalValue: undefined,
@@ -1417,14 +1472,18 @@ export class Generator {
     if (ts.isAsExpression(node)) {
       const expression = this.generateExpression(node.expression, builder, context)
 
-      return this.castTo(expression, typeFromNode(node.type), builder)
+      return this.castTo(node, expression, typeFromNode(node.type), builder)
     }
 
     if (ts.isParenthesizedExpression(node)) {
       return this.generateExpression(node.expression, builder, context)
     }
 
-    throw new Error(`Unsupported expression: ${ts.SyntaxKind[node.kind]}.`)
+    throw new CompilerError(
+      'unsupported',
+      `Unsupported expression: ${ts.SyntaxKind[node.kind]}.`,
+      node,
+    )
   }
 
   /**
@@ -1453,9 +1512,9 @@ export class Generator {
 
     if (!sameType(left.type, right.type)) {
       if (left.literalValue !== undefined) {
-        left = this.adaptTo(left, right.type, builder, context)
+        left = this.adaptTo(node, left, right.type, builder, context)
       } else if (right.literalValue !== undefined) {
-        right = this.adaptTo(right, left.type, builder, context)
+        right = this.adaptTo(node, right, left.type, builder, context)
       }
     }
 
@@ -1463,30 +1522,36 @@ export class Generator {
       const common = commonIntegerTypeOf(left.type, right.type)
 
       if (common !== undefined) {
-        left = this.castTo(left, common, builder)
-        right = this.castTo(right, common, builder)
+        left = this.castTo(node, left, common, builder)
+        right = this.castTo(node, right, common, builder)
       }
     }
 
     if (isComparisonOperator(operator)) {
-      return this.generateComparison(left, right, operator, builder, context)
+      return this.generateComparison(node, left, right, operator, builder, context)
     }
 
     if (isStringType(left.type) || isStringType(right.type)) {
       if (operator !== ts.SyntaxKind.PlusToken) {
-        throw new Error(`Strings do not support '${ts.SyntaxKind[operator]}'.`)
+        throw new CompilerError(
+          'type-mismatch',
+          `Strings do not support '${ts.SyntaxKind[operator]}'.`,
+          node,
+        )
       }
 
       if (!isStringType(left.type) || !isStringType(right.type)) {
-        throw new Error('String concatenation requires two strings.')
+        throw new CompilerError('type-mismatch', 'String concatenation requires two strings.', node)
       }
 
-      return this.concatenateStrings(left, right, builder, context)
+      return this.concatenateStrings(node, left, right, builder, context)
     }
 
     if (!sameType(left.type, right.type)) {
-      throw new Error(
+      throw new CompilerError(
+        'type-mismatch',
         `Operands must have the same type: ${describeType(left.type)} and ${describeType(right.type)}.`,
+        node,
       )
     }
 
@@ -1494,7 +1559,11 @@ export class Generator {
       const opcode = arithmeticOpcodeOf(operator, left.type)
 
       if (opcode === undefined) {
-        throw new Error(`Unsupported operator: ${ts.SyntaxKind[operator]}.`)
+        throw new CompilerError(
+          'unsupported',
+          `Unsupported operator: ${ts.SyntaxKind[operator]}.`,
+          node,
+        )
       }
 
       if (isDivisionOperator(operator)) {
@@ -1508,13 +1577,18 @@ export class Generator {
       }
     }
 
-    throw new Error(`Unsupported operands for '${ts.SyntaxKind[operator]}'.`)
+    throw new CompilerError(
+      'unsupported',
+      `Unsupported operands for '${ts.SyntaxKind[operator]}'.`,
+      node,
+    )
   }
 
   /**
    * Generates a comparison.
    */
   private generateComparison(
+    node: ts.BinaryExpression,
     left: ExpressionResult,
     right: ExpressionResult,
     operator: ts.SyntaxKind,
@@ -1526,9 +1600,9 @@ export class Generator {
 
     if (!sameType(leftResult.type, rightResult.type)) {
       if (leftResult.literalValue !== undefined) {
-        leftResult = this.adaptTo(leftResult, rightResult.type, builder, context)
+        leftResult = this.adaptTo(node, leftResult, rightResult.type, builder, context)
       } else if (rightResult.literalValue !== undefined) {
-        rightResult = this.adaptTo(rightResult, leftResult.type, builder, context)
+        rightResult = this.adaptTo(node, rightResult, leftResult.type, builder, context)
       }
     }
 
@@ -1540,14 +1614,16 @@ export class Generator {
       const common = commonIntegerTypeOf(leftResult.type, rightResult.type)
 
       if (common !== undefined) {
-        leftResult = this.castTo(leftResult, common, builder)
-        rightResult = this.castTo(rightResult, common, builder)
+        leftResult = this.castTo(node, leftResult, common, builder)
+        rightResult = this.castTo(node, rightResult, common, builder)
       }
     }
 
     if (!sameType(leftResult.type, rightResult.type)) {
-      throw new Error(
-        `Comparison operands must have the same type: ${describeType(left.type)} and ${describeType(right.type)}.`,
+      throw new CompilerError(
+        'type-mismatch',
+        `Comparison operands must have the same type: ${describeType(leftResult.type)} and ${describeType(rightResult.type)}.`,
+        node,
       )
     }
 
@@ -1557,7 +1633,7 @@ export class Generator {
         { type: 'ptr', value: leftResult.operand },
         { type: 'ptr', value: rightResult.operand },
       ])
-      const result = this.compareAgainstZero(compared, operator, builder)
+      const result = this.compareAgainstZero(node, compared, operator, builder)
 
       return { literalValue: undefined, operand: result, type: booleanType }
     }
@@ -1566,7 +1642,11 @@ export class Generator {
       const opcode = comparisonOpcodeOf(operator, leftResult.type)
 
       if (opcode === undefined) {
-        throw new Error(`Unsupported comparison: ${ts.SyntaxKind[operator]}.`)
+        throw new CompilerError(
+          'unsupported',
+          `Unsupported comparison: ${ts.SyntaxKind[operator]}.`,
+          node,
+        )
       }
 
       return {
@@ -1581,25 +1661,34 @@ export class Generator {
       }
     }
 
-    throw new Error(`Unsupported comparison operands: ${describeType(leftResult.type)}.`)
+    throw new CompilerError(
+      'unsupported',
+      `Unsupported comparison operands: ${describeType(leftResult.type)}.`,
+      node,
+    )
   }
 
   /**
    * Compares an i32 against zero for string comparisons.
    */
   private compareAgainstZero(
+    node: ts.Node,
     compared: LlvmLocal | undefined,
     operator: ts.SyntaxKind,
     builder: LlvmFunction,
   ): LlvmLocal {
     if (compared === undefined) {
-      throw new Error('The string comparison failed.')
+      throw new CompilerError('invalid-operation', 'The string comparison failed.', node)
     }
 
     const opcode = signedComparisonOpcodeOf(operator)
 
     if (opcode === undefined) {
-      throw new Error(`Strings do not support '${ts.SyntaxKind[operator]}'.`)
+      throw new CompilerError(
+        'type-mismatch',
+        `Strings do not support '${ts.SyntaxKind[operator]}'.`,
+        node,
+      )
     }
 
     return builder.binary('i32', opcode, compared, {
@@ -1625,7 +1714,7 @@ export class Generator {
     const left = this.generateExpression(node.left, builder, context)
 
     if (!isBooleanType(left.type)) {
-      throw new Error('Logical operators require boolean operands.')
+      throw new CompilerError('type-mismatch', 'Logical operators require boolean operands.', node)
     }
 
     builder.store('i1', left.operand, temp)
@@ -1640,7 +1729,7 @@ export class Generator {
     const right = this.generateExpression(node.right, builder, context)
 
     if (!isBooleanType(right.type)) {
-      throw new Error('Logical operators require boolean operands.')
+      throw new CompilerError('type-mismatch', 'Logical operators require boolean operands.', node)
     }
 
     builder.store('i1', right.operand, temp)
@@ -1665,28 +1754,40 @@ export class Generator {
   ): ExpressionResult {
     const target = this.generateAssignmentTarget(node.left, builder, context)
     let value = this.generateExpression(node.right, builder, context)
-    value = this.adaptTo(value, target.type, builder, context)
+    value = this.adaptTo(node, value, target.type, builder, context)
 
     if (operator !== ts.SyntaxKind.EqualsToken) {
       const arithmeticOperator = compoundOperatorOf(operator)
 
       if (arithmeticOperator === undefined) {
-        throw new Error(`Unsupported assignment operator: ${ts.SyntaxKind[operator]}.`)
+        throw new CompilerError(
+          'unsupported',
+          `Unsupported assignment operator: ${ts.SyntaxKind[operator]}.`,
+          node,
+        )
       }
 
       if (isStringType(target.type)) {
-        throw new Error('Strings do not support compound assignment.')
+        throw new CompilerError(
+          'type-mismatch',
+          'Strings do not support compound assignment.',
+          node,
+        )
       }
 
       if (!isNumericType(target.type)) {
-        throw new Error('Compound assignment requires numbers.')
+        throw new CompilerError('type-mismatch', 'Compound assignment requires numbers.', node)
       }
 
       const current = builder.load(irTypeFromType(target.type), target.pointer)
       const opcode = arithmeticOpcodeOf(arithmeticOperator, target.type)
 
       if (opcode === undefined) {
-        throw new Error(`Unsupported assignment operator: ${ts.SyntaxKind[operator]}.`)
+        throw new CompilerError(
+          'unsupported',
+          `Unsupported assignment operator: ${ts.SyntaxKind[operator]}.`,
+          node,
+        )
       }
 
       if (isDivisionOperator(arithmeticOperator)) {
@@ -1715,7 +1816,7 @@ export class Generator {
     context: GenerationContext,
   ): { pointer: LlvmLocal; type: Type } {
     if (ts.isIdentifier(node)) {
-      const slot = this.lookupVariable(node.text, context)
+      const slot = this.lookupVariable(node, node.text, context)
 
       return { pointer: slot.pointer, type: slot.type }
     }
@@ -1732,7 +1833,11 @@ export class Generator {
       return { pointer: address.pointer, type: address.type }
     }
 
-    throw new Error('Assignment targets must be variables, fields or array elements.')
+    throw new CompilerError(
+      'type-mismatch',
+      'Assignment targets must be variables, fields or array elements.',
+      node,
+    )
   }
 
   /**
@@ -1749,7 +1854,7 @@ export class Generator {
       const operand = this.generateExpression(node.operand, builder, context)
 
       if (!isBooleanType(operand.type)) {
-        throw new Error('Logical not requires a boolean.')
+        throw new CompilerError('type-mismatch', 'Logical not requires a boolean.', node)
       }
 
       return {
@@ -1788,14 +1893,14 @@ export class Generator {
         }
       }
 
-      throw new Error('Unary minus requires a signed number.')
+      throw new CompilerError('type-mismatch', 'Unary minus requires a signed number.', node)
     }
 
     if (operator === ts.SyntaxKind.PlusToken) {
       const operand = this.generateExpression(node.operand, builder, context)
 
       if (!isNumericType(operand.type)) {
-        throw new Error('Unary plus requires a number.')
+        throw new CompilerError('type-mismatch', 'Unary plus requires a number.', node)
       }
 
       return operand
@@ -1805,7 +1910,11 @@ export class Generator {
       return this.generateUpdateExpression(node, operator, builder, context)
     }
 
-    throw new Error(`Unsupported unary operator: ${ts.SyntaxKind[operator]}.`)
+    throw new CompilerError(
+      'unsupported',
+      `Unsupported unary operator: ${ts.SyntaxKind[operator]}.`,
+      node,
+    )
   }
 
   /**
@@ -1820,7 +1929,7 @@ export class Generator {
     const target = this.generateAssignmentTarget(node.operand, builder, context)
 
     if (!isNumericType(target.type)) {
-      throw new Error('Increment and decrement require numbers.')
+      throw new CompilerError('type-mismatch', 'Increment and decrement require numbers.', node)
     }
 
     const current = builder.load(irTypeFromType(target.type), target.pointer)
@@ -1857,7 +1966,7 @@ export class Generator {
     }
 
     if (!ts.isIdentifier(node.expression)) {
-      throw new Error('Only direct function calls are supported yet.')
+      throw new CompilerError('unsupported', 'Only direct function calls are supported yet.', node)
     }
 
     const name = node.expression.text
@@ -1865,7 +1974,7 @@ export class Generator {
     const builtin = context.builtins.get(name)
 
     if (signature === undefined && builtin === undefined) {
-      throw new Error(`Unknown function '${name}'.`)
+      throw new CompilerError('unknown-name', `Unknown function '${name}'.`, node)
     }
 
     if (builtin !== undefined) {
@@ -1873,12 +1982,14 @@ export class Generator {
     }
 
     if (signature === undefined) {
-      throw new Error(`Unknown function '${name}'.`)
+      throw new CompilerError('unknown-name', `Unknown function '${name}'.`, node)
     }
 
     if (node.arguments.length !== signature.parameterTypes.length) {
-      throw new Error(
+      throw new CompilerError(
+        'type-mismatch',
         `Function '${name}' expects ${String(signature.parameterTypes.length)} arguments.`,
+        node,
       )
     }
 
@@ -1902,18 +2013,26 @@ export class Generator {
     context: GenerationContext,
   ): CallArgument[] {
     if (node.arguments.length !== parameterTypes.length) {
-      throw new Error(`The call expects ${String(parameterTypes.length)} arguments.`)
+      throw new CompilerError(
+        'type-mismatch',
+        `The call expects ${String(parameterTypes.length)} arguments.`,
+        node,
+      )
     }
 
     return node.arguments.map((argument, index) => {
       const parameterType = parameterTypes[index]
 
       if (parameterType === undefined) {
-        throw new Error(`Argument ${String(index)} has no type.`)
+        throw new CompilerError(
+          'missing-annotation',
+          `Argument ${String(index)} has no type.`,
+          node,
+        )
       }
 
       const result = this.generateExpression(argument, builder, context)
-      const adapted = this.adaptTo(result, parameterType, builder, context)
+      const adapted = this.adaptTo(node, result, parameterType, builder, context)
 
       return { type: irTypeFromType(parameterType), value: adapted.operand }
     })
@@ -1929,23 +2048,31 @@ export class Generator {
     context: GenerationContext,
   ): ExpressionResult {
     if (node.arguments.length !== builtin.parameters.length) {
-      throw new Error(
+      throw new CompilerError(
+        'type-mismatch',
         `Builtin '${builtin.name}' expects ${String(builtin.parameters.length)} arguments.`,
+        node,
       )
     }
 
     const argumentNode = node.arguments[0]
 
     if (argumentNode === undefined) {
-      throw new Error(`Builtin '${builtin.name}' requires an argument.`)
+      throw new CompilerError(
+        'type-mismatch',
+        `Builtin '${builtin.name}' requires an argument.`,
+        node,
+      )
     }
 
     const parameter = builtin.parameters[0]
     const argument = this.generateExpression(argumentNode, builder, context)
 
     if (parameter === undefined || !builtinAccepts(parameter, argument.type)) {
-      throw new Error(
+      throw new CompilerError(
+        'type-mismatch',
         `Builtin '${builtin.name}' does not accept ${describeType(argument.type)} values.`,
+        node,
       )
     }
 
@@ -1964,7 +2091,7 @@ export class Generator {
     }
 
     if (isIntegerType(argument.type) && sizeOf(argument.type) < 4) {
-      value = this.widenToI32(argument, builder).operand
+      value = this.widenToI32(node, argument, builder).operand
       valueType = 'i32'
     }
 
@@ -2018,63 +2145,84 @@ export class Generator {
     const memberName = memberNameOf(node.name)
 
     if (node.expression.kind === ts.SyntaxKind.SuperKeyword) {
-      return this.generateSuperFieldAddress(memberName, builder, context)
+      return this.generateSuperFieldAddress(node, memberName, builder, context)
     }
 
     const target = this.generateExpression(node.expression, builder, context)
 
     if (isArrayType(target.type)) {
       if (memberName !== 'length') {
-        throw new Error('Arrays only support length.')
+        throw new CompilerError('invalid-operation', 'Arrays only support length.', node)
       }
 
       return { pointer: this.lengthAddress(target.operand, builder), type: usizeType }
     }
 
     if (isReferenceType(target.type)) {
-      const classInfo = this.classInfoOf(target.type.name, context)
+      const classInfo = this.classInfoOf(node, target.type.name, context)
       const field = classInfo.allFields.find((candidate) => candidate.name === memberName)
 
       if (field !== undefined) {
-        this.checkVisibility(field.visibility, field.owner, memberName, context)
+        this.checkVisibility(node, field.visibility, field.owner, memberName, context)
         const pointer = builder.fieldPointer(`%${classInfo.name}`, target.operand, field.index)
 
         return { pointer, type: field.type }
       }
 
       if (this.findMethod(context, classInfo, memberName) !== undefined) {
-        throw new Error(`Methods must be called: use '${memberName}(...)'.`)
+        throw new CompilerError(
+          'unsupported',
+          `Methods must be called: use '${memberName}(...)'.`,
+          node,
+        )
       }
 
-      throw new Error(`Class '${classInfo.name}' has no member '${memberName}'.`)
+      throw new CompilerError(
+        'invalid-operation',
+        `Class '${classInfo.name}' has no member '${memberName}'.`,
+        node,
+      )
     }
 
-    throw new Error(`Values of type '${describeType(target.type)}' have no members.`)
+    throw new CompilerError(
+      'invalid-operation',
+      `Values of type '${describeType(target.type)}' have no members.`,
+      node,
+    )
   }
 
   /**
    * Resolves the storage of a field access through the base class.
    */
   private generateSuperFieldAddress(
+    node: ts.Node,
     memberName: string,
     builder: LlvmFunction,
     context: GenerationContext,
   ): { pointer: LlvmLocal; type: Type } {
     if (context.thisPointer === undefined || context.thisType === undefined) {
-      throw new Error('Super outside of a class is not supported.')
+      throw new CompilerError('unsupported', 'Super outside of a class is not supported.', node)
     }
 
-    const classInfo = this.classInfoOf(context.thisType, context)
+    const classInfo = this.classInfoOf(node, context.thisType, context)
 
     if (classInfo.base === undefined) {
-      throw new Error(`Class '${classInfo.name}' has no base class.`)
+      throw new CompilerError(
+        'invalid-operation',
+        `Class '${classInfo.name}' has no base class.`,
+        node,
+      )
     }
 
-    const baseInfo = this.classInfoOf(classInfo.base, context)
+    const baseInfo = this.classInfoOf(node, classInfo.base, context)
     const field = baseInfo.allFields.find((candidate) => candidate.name === memberName)
 
     if (field === undefined) {
-      throw new Error(`Class '${baseInfo.name}' has no field '${memberName}'.`)
+      throw new CompilerError(
+        'invalid-operation',
+        `Class '${baseInfo.name}' has no field '${memberName}'.`,
+        node,
+      )
     }
 
     const pointer = builder.fieldPointer(`%${baseInfo.name}`, context.thisPointer, field.index)
@@ -2093,7 +2241,7 @@ export class Generator {
     const access = node.expression
 
     if (!ts.isPropertyAccessExpression(access)) {
-      throw new Error('Method calls require a member access.')
+      throw new CompilerError('type-mismatch', 'Method calls require a member access.', node)
     }
 
     if (access.expression.kind === ts.SyntaxKind.SuperKeyword) {
@@ -2104,30 +2252,40 @@ export class Generator {
     const memberName = memberNameOf(access.name)
 
     if (isArrayType(target.type)) {
-      throw new Error('Arrays have no methods yet.')
+      throw new CompilerError('invalid-operation', 'Arrays have no methods yet.', node)
     }
 
     if (isStringType(target.type)) {
-      throw new Error('Strings have no methods yet.')
+      throw new CompilerError('invalid-operation', 'Strings have no methods yet.', node)
     }
 
     if (!isReferenceType(target.type)) {
-      throw new Error(`Values of type '${describeType(target.type)}' have no methods.`)
+      throw new CompilerError(
+        'invalid-operation',
+        `Values of type '${describeType(target.type)}' have no methods.`,
+        node,
+      )
     }
 
-    const classInfo = this.classInfoOf(target.type.name, context)
+    const classInfo = this.classInfoOf(node, target.type.name, context)
     const slot = classInfo.vtable.indexOf(memberName)
     const method = this.findMethod(context, classInfo, memberName)
 
     if (slot === -1 || method === undefined) {
-      throw new Error(`Class '${classInfo.name}' has no method '${memberName}'.`)
+      throw new CompilerError(
+        'invalid-operation',
+        `Class '${classInfo.name}' has no method '${memberName}'.`,
+        node,
+      )
     }
 
-    this.checkVisibility(method.visibility, classInfo.name, memberName, context)
+    this.checkVisibility(node, method.visibility, classInfo.name, memberName, context)
 
     if (node.arguments.length !== method.signature.parameterTypes.length - 1) {
-      throw new Error(
+      throw new CompilerError(
+        'type-mismatch',
         `Method '${memberName}' expects ${String(method.signature.parameterTypes.length - 1)} arguments.`,
+        node,
       )
     }
 
@@ -2150,11 +2308,15 @@ export class Generator {
       const argumentNode = node.arguments[index - 1]
 
       if (parameterType === undefined || argumentNode === undefined) {
-        throw new Error(`Argument ${String(index)} of '${memberName}' has no type.`)
+        throw new CompilerError(
+          'missing-annotation',
+          `Argument ${String(index)} of '${memberName}' has no type.`,
+          node,
+        )
       }
 
       const result = this.generateExpression(argumentNode, builder, context)
-      const adapted = this.adaptTo(result, parameterType, builder, context)
+      const adapted = this.adaptTo(node, result, parameterType, builder, context)
 
       args.push({ type: irTypeFromType(parameterType), value: adapted.operand })
     }
@@ -2181,20 +2343,28 @@ export class Generator {
     context: GenerationContext,
   ): ExpressionResult {
     if (context.thisPointer === undefined || context.thisType === undefined) {
-      throw new Error('Super outside of a class is not supported.')
+      throw new CompilerError('unsupported', 'Super outside of a class is not supported.', node)
     }
 
-    const classInfo = this.classInfoOf(context.thisType, context)
+    const classInfo = this.classInfoOf(node, context.thisType, context)
 
     if (classInfo.base === undefined) {
-      throw new Error(`Class '${classInfo.name}' has no base class.`)
+      throw new CompilerError(
+        'invalid-operation',
+        `Class '${classInfo.name}' has no base class.`,
+        node,
+      )
     }
 
-    const baseInfo = this.classInfoOf(classInfo.base, context)
+    const baseInfo = this.classInfoOf(node, classInfo.base, context)
     const constructorInfo = baseInfo.methods.get('constructor')
 
     if (constructorInfo === undefined) {
-      throw new Error(`Class '${baseInfo.name}' has no constructor.`)
+      throw new CompilerError(
+        'invalid-operation',
+        `Class '${baseInfo.name}' has no constructor.`,
+        node,
+      )
     }
 
     const args: CallArgument[] = [{ type: 'ptr', value: context.thisPointer }]
@@ -2205,11 +2375,15 @@ export class Generator {
       const argumentNode = constructorArguments[index]
 
       if (parameterType === undefined || argumentNode === undefined) {
-        throw new Error(`Argument ${String(index)} of the constructor has no type.`)
+        throw new CompilerError(
+          'missing-annotation',
+          `Argument ${String(index)} of the constructor has no type.`,
+          node,
+        )
       }
 
       const result = this.generateExpression(argumentNode, builder, context)
-      const adapted = this.adaptTo(result, parameterType, builder, context)
+      const adapted = this.adaptTo(node, result, parameterType, builder, context)
 
       args.push({ type: irTypeFromType(parameterType), value: adapted.operand })
     }
@@ -2233,26 +2407,36 @@ export class Generator {
     context: GenerationContext,
   ): ExpressionResult {
     if (context.thisPointer === undefined || context.thisType === undefined) {
-      throw new Error('Super outside of a class is not supported.')
+      throw new CompilerError('unsupported', 'Super outside of a class is not supported.', node)
     }
 
-    const classInfo = this.classInfoOf(context.thisType, context)
+    const classInfo = this.classInfoOf(node, context.thisType, context)
 
     if (classInfo.base === undefined) {
-      throw new Error(`Class '${classInfo.name}' has no base class.`)
+      throw new CompilerError(
+        'invalid-operation',
+        `Class '${classInfo.name}' has no base class.`,
+        node,
+      )
     }
 
-    const baseInfo = this.classInfoOf(classInfo.base, context)
+    const baseInfo = this.classInfoOf(node, classInfo.base, context)
     const memberName = memberNameOf(access.name)
     const method = this.findMethod(context, baseInfo, memberName)
 
     if (method === undefined) {
-      throw new Error(`Class '${baseInfo.name}' has no method '${memberName}'.`)
+      throw new CompilerError(
+        'invalid-operation',
+        `Class '${baseInfo.name}' has no method '${memberName}'.`,
+        node,
+      )
     }
 
     if (node.arguments.length !== method.signature.parameterTypes.length - 1) {
-      throw new Error(
+      throw new CompilerError(
+        'type-mismatch',
         `Method '${memberName}' expects ${String(method.signature.parameterTypes.length - 1)} arguments.`,
+        node,
       )
     }
 
@@ -2263,11 +2447,15 @@ export class Generator {
       const argumentNode = node.arguments[index - 1]
 
       if (parameterType === undefined || argumentNode === undefined) {
-        throw new Error(`Argument ${String(index)} of '${memberName}' has no type.`)
+        throw new CompilerError(
+          'missing-annotation',
+          `Argument ${String(index)} of '${memberName}' has no type.`,
+          node,
+        )
       }
 
       const result = this.generateExpression(argumentNode, builder, context)
-      const adapted = this.adaptTo(result, parameterType, builder, context)
+      const adapted = this.adaptTo(node, result, parameterType, builder, context)
 
       args.push({ type: irTypeFromType(parameterType), value: adapted.operand })
     }
@@ -2313,16 +2501,16 @@ export class Generator {
     const array = this.generateExpression(node.expression, builder, context)
 
     if (!isArrayType(array.type)) {
-      throw new Error('Indexing requires an array.')
+      throw new CompilerError('type-mismatch', 'Indexing requires an array.', node)
     }
 
     const index = this.generateExpression(node.argumentExpression, builder, context)
 
     if (!isIntegerType(index.type)) {
-      throw new Error('Array indices must be integers.')
+      throw new CompilerError('type-mismatch', 'Array indices must be integers.', node)
     }
 
-    const index64 = this.widenToI64(index, builder)
+    const index64 = this.widenToI64(node, index, builder)
     const elementType = array.type.elementType
     this.generateBoundsCheck(array.operand, index64.operand, builder, context)
 
@@ -2341,7 +2529,7 @@ export class Generator {
     context: GenerationContext,
   ): ExpressionResult {
     if (node.elements.length === 0) {
-      throw new Error('Cannot infer the type of an empty array.')
+      throw new CompilerError('type-mismatch', 'Cannot infer the type of an empty array.', node)
     }
 
     const elements: ExpressionResult[] = []
@@ -2357,15 +2545,15 @@ export class Generator {
         continue
       }
 
-      elements.push(this.adaptTo(result, elementType, builder, context))
+      elements.push(this.adaptTo(node, result, elementType, builder, context))
     }
 
     if (elementType === undefined) {
-      throw new Error('Cannot infer the type of an empty array.')
+      throw new CompilerError('type-mismatch', 'Cannot infer the type of an empty array.', node)
     }
 
     const bytes = 8 + elements.length * sizeOf(elementType)
-    const pointer = this.gcAlloc(bytes, builder, context)
+    const pointer = this.gcAlloc(node, bytes, builder, context)
 
     builder.store('i64', { kind: 'constant', type: 'i64', text: String(elements.length) }, pointer)
 
@@ -2395,13 +2583,13 @@ export class Generator {
     context: GenerationContext,
   ): ExpressionResult {
     if (!ts.isIdentifier(node.expression)) {
-      throw new Error('Only direct class instantiation is supported.')
+      throw new CompilerError('unsupported', 'Only direct class instantiation is supported.', node)
     }
 
     const className = node.expression.text
-    const classInfo = this.classInfoOf(className, context)
+    const classInfo = this.classInfoOf(node, className, context)
     const bytes = 8 + classInfo.allFields.reduce((total, field) => total + sizeOf(field.type), 0)
-    const pointer = this.gcAlloc(bytes, builder, context)
+    const pointer = this.gcAlloc(node, bytes, builder, context)
 
     builder.store('ptr', { kind: 'global', name: `${className}.vt` }, pointer)
 
@@ -2417,7 +2605,11 @@ export class Generator {
       const declaration = findMethodDeclaration(context, className, 'constructor')
 
       if (declaration === undefined || !ts.isConstructorDeclaration(declaration)) {
-        throw new Error(`Constructor of class '${className}' is missing.`)
+        throw new CompilerError(
+          'invalid-operation',
+          `Constructor of class '${className}' is missing.`,
+          node,
+        )
       }
 
       const previousThisPointer = context.thisPointer
@@ -2429,7 +2621,7 @@ export class Generator {
       const classDeclaration = context.sourceClasses.get(className)
 
       if (classDeclaration === undefined) {
-        throw new Error(`Class '${className}' is missing.`)
+        throw new CompilerError('invalid-operation', `Class '${className}' is missing.`, node)
       }
 
       for (const field of classInfo.fields) {
@@ -2443,7 +2635,13 @@ export class Generator {
           property.initializer !== undefined
         ) {
           const initializer = this.generateExpression(property.initializer, builder, context)
-          const adapted = this.adaptTo(initializer, field.type, builder, context)
+          const adapted = this.adaptTo(
+            property.initializer,
+            initializer,
+            field.type,
+            builder,
+            context,
+          )
           const fieldPointer = builder.fieldPointer(`%${className}`, pointer, field.index)
 
           builder.store(irTypeFromType(field.type), adapted.operand, fieldPointer)
@@ -2458,11 +2656,15 @@ export class Generator {
         const argumentNode = constructorArguments[index]
 
         if (parameterType === undefined || argumentNode === undefined) {
-          throw new Error(`Argument ${String(index)} of the constructor has no type.`)
+          throw new CompilerError(
+            'missing-annotation',
+            `Argument ${String(index)} of the constructor has no type.`,
+            node,
+          )
         }
 
         const result = this.generateExpression(argumentNode, builder, context)
-        const adapted = this.adaptTo(result, parameterType, builder, context)
+        const adapted = this.adaptTo(node, result, parameterType, builder, context)
 
         args.push({ type: irTypeFromType(parameterType), value: adapted.operand })
       }
@@ -2490,7 +2692,11 @@ export class Generator {
     const condition = this.generateExpression(node.condition, builder, context)
 
     if (!isBooleanType(condition.type)) {
-      throw new Error('Conditional expressions require a boolean condition.')
+      throw new CompilerError(
+        'type-mismatch',
+        'Conditional expressions require a boolean condition.',
+        node,
+      )
     }
 
     const trueLabel = builder.reserveLabel('cond.true')
@@ -2503,7 +2709,7 @@ export class Generator {
     const trueResult = this.generateExpression(node.whenTrue, builder, context)
 
     if (trueResult.type.kind === 'void') {
-      throw new Error('Conditional expressions cannot produce void.')
+      throw new CompilerError('type-mismatch', 'Conditional expressions cannot produce void.', node)
     }
 
     const trueType = trueResult.type
@@ -2516,7 +2722,11 @@ export class Generator {
     const falseResult = this.generateExpression(node.whenFalse, builder, context)
 
     if (!sameType(falseResult.type, trueType)) {
-      throw new Error('Conditional expression branches must have the same type.')
+      throw new CompilerError(
+        'type-mismatch',
+        'Conditional expression branches must have the same type.',
+        node,
+      )
     }
 
     builder.store(irTypeFromType(trueType), falseResult.operand, temp)
@@ -2616,6 +2826,7 @@ export class Generator {
    * Concatenates two strings into a new garbage collected string.
    */
   private concatenateStrings(
+    _node: ts.Node,
     left: ExpressionResult,
     right: ExpressionResult,
     builder: LlvmFunction,
@@ -2670,7 +2881,11 @@ export class Generator {
   /**
    * Widens an integer to i64, preserving signedness.
    */
-  private widenToI64(result: ExpressionResult, builder: LlvmFunction): ExpressionResult {
+  private widenToI64(
+    _node: ts.Node,
+    result: ExpressionResult,
+    builder: LlvmFunction,
+  ): ExpressionResult {
     if (
       result.type.kind === 'primitive' &&
       (result.type.name === 'i64' || result.type.name === 'usize')
@@ -2700,7 +2915,11 @@ export class Generator {
   /**
    * Widens an integer to i32 for variadic calls.
    */
-  private widenToI32(result: ExpressionResult, builder: LlvmFunction): ExpressionResult {
+  private widenToI32(
+    _node: ts.Node,
+    result: ExpressionResult,
+    builder: LlvmFunction,
+  ): ExpressionResult {
     if (result.type.kind === 'primitive' && result.type.name === 'i32') {
       return result
     }
@@ -2724,6 +2943,7 @@ export class Generator {
    * Converts a value to the target type with an explicit cast.
    */
   private castTo(
+    _node: ts.Node,
     result: ExpressionResult,
     targetType: Type,
     builder: LlvmFunction,
@@ -2797,13 +3017,18 @@ export class Generator {
       }
     }
 
-    throw new Error(`Cannot cast ${describeType(source)} to ${describeType(targetType)}.`)
+    throw new CompilerError(
+      'type-mismatch',
+      `Cannot cast ${describeType(source)} to ${describeType(targetType)}.`,
+      _node,
+    )
   }
 
   /**
    * Adapts a value to the target type, allowing literal narrowing and class upcasts.
    */
   private adaptTo(
+    node: ts.Node,
     result: ExpressionResult,
     targetType: Type,
     _builder: LlvmFunction,
@@ -2818,8 +3043,11 @@ export class Generator {
         return numericLiteralResultFor(result.literalValue, targetType)
       }
 
-      throw new Error(
+      throw new CompilerError(
+        'literal-overflow',
         `The literal ${String(result.literalValue)} does not fit in ${describeType(targetType)}.`,
+        node,
+        `Use a type that fits the value, such as 'i32' or 'i64'.`,
       )
     }
 
@@ -2831,15 +3059,23 @@ export class Generator {
       return { literalValue: undefined, operand: result.operand, type: targetType }
     }
 
-    throw new Error(
+    throw new CompilerError(
+      'type-mismatch',
       `Cannot assign a value of type '${describeType(result.type)}' to '${describeType(targetType)}'.`,
+      node,
+      `Use a value of type '${describeType(targetType)}' or cast with 'as ${describeType(targetType)}'.`,
     )
   }
 
   /**
    * Allocates garbage collected memory.
    */
-  private gcAlloc(bytes: number, builder: LlvmFunction, context: GenerationContext): LlvmLocal {
+  private gcAlloc(
+    _node: ts.Node,
+    bytes: number,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): LlvmLocal {
     context.module.addDeclaration('declare ptr @GC_malloc(i64)')
     const pointer = builder.call('ptr', 'GC_malloc', [
       { type: 'i64', value: { kind: 'constant', type: 'i64', text: String(bytes) } },
@@ -2909,6 +3145,7 @@ export class Generator {
    * Fails when a member is not visible from the current class.
    */
   private checkVisibility(
+    node: ts.Node,
     visibility: MemberVisibility,
     owner: string,
     memberName: string,
@@ -2921,21 +3158,31 @@ export class Generator {
     const currentClass = context.thisType
 
     if (visibility === 'private' && currentClass !== owner) {
-      throw new Error(`Field '${memberName}' is private to class '${owner}'.`)
+      throw new CompilerError(
+        'visibility',
+        `Field '${memberName}' is private to class '${owner}'.`,
+        node,
+        `Access '${memberName}' from inside class '${owner}' or make it public.`,
+      )
     }
 
     if (
       visibility === 'protected' &&
       (currentClass === undefined || !isSubclassOf(context, currentClass, owner))
     ) {
-      throw new Error(`Field '${memberName}' is protected in class '${owner}'.`)
+      throw new CompilerError(
+        'visibility',
+        `Field '${memberName}' is protected in class '${owner}'.`,
+        node,
+        `Access '${memberName}' from a subclass of '${owner}' or make it public.`,
+      )
     }
   }
 
   /**
    * Returns the default value of a type for uninitialized variables.
    */
-  private defaultValueOf(type: Type): LlvmOperand {
+  private defaultValueOf(_node: ts.Node, type: Type): LlvmOperand {
     if (isReferenceType(type) || isStringType(type)) {
       return this.zeroValueOf(type)
     }
@@ -2979,7 +3226,7 @@ export class Generator {
   /**
    * Looks up a variable in the scope chain.
    */
-  private lookupVariable(name: string, context: GenerationContext): VariableSlot {
+  private lookupVariable(_node: ts.Node, name: string, context: GenerationContext): VariableSlot {
     for (let index = context.scopes.length - 1; index >= 0; index--) {
       const slot = context.scopes[index]?.get(name)
 
@@ -2988,13 +3235,17 @@ export class Generator {
       }
     }
 
-    throw new Error(`Unknown variable '${name}'.`)
+    throw new CompilerError('unknown-name', `Unknown variable '${name}'.`, undefined)
   }
 
   /**
    * Returns the information of a class, failing when it is unknown.
    */
-  private classInfoOf(name: string, context: GenerationContext): ClassInfo {
+  private classInfoOf(
+    _node: ts.Node | undefined,
+    name: string,
+    context: GenerationContext,
+  ): ClassInfo {
     const classInfo = context.classes.get(name)
 
     if (classInfo === undefined) {
@@ -3021,7 +3272,8 @@ export class Generator {
         return method
       }
 
-      current = current.base === undefined ? undefined : this.classInfoOf(current.base, context)
+      current =
+        current.base === undefined ? undefined : this.classInfoOf(undefined, current.base, context)
     }
 
     return undefined
@@ -3054,6 +3306,7 @@ export class Generator {
    * Returns the loop that a break or continue refers to.
    */
   private loopOf(
+    _node: ts.Node,
     labelText: string | undefined,
     context: GenerationContext,
   ): LoopContext | undefined {
@@ -3633,7 +3886,7 @@ function memberNameOf(name: ts.MemberName | ts.PropertyName): string {
     return name.text
   }
 
-  throw new Error('Class members require a simple name.')
+  throw new CompilerError('unsupported', 'Class members require a simple name.', name)
 }
 
 /**
@@ -3641,13 +3894,13 @@ function memberNameOf(name: ts.MemberName | ts.PropertyName): string {
  */
 function functionNameOf(declaration: ts.FunctionDeclaration, reserved: string): string {
   if (declaration.name === undefined || !ts.isIdentifier(declaration.name)) {
-    throw new Error('Functions require a simple name.')
+    throw new CompilerError('unsupported', 'Functions require a simple name.', declaration)
   }
 
   const name = declaration.name.text
 
   if (name === reserved || name.includes('.')) {
-    throw new Error(`Function name '${name}' is reserved.`)
+    throw new CompilerError('reserved-name', `Function name '${name}' is reserved.`, declaration)
   }
 
   return name
@@ -3658,7 +3911,7 @@ function functionNameOf(declaration: ts.FunctionDeclaration, reserved: string): 
  */
 function parameterNameOf(parameter: ts.ParameterDeclaration): string {
   if (!ts.isIdentifier(parameter.name)) {
-    throw new Error('Parameters require a simple name.')
+    throw new CompilerError('unsupported', 'Parameters require a simple name.', parameter)
   }
 
   return parameter.name.text
@@ -3678,7 +3931,7 @@ function baseNameOf(statement: ts.ClassDeclaration): string | undefined {
   }
 
   if (!ts.isIdentifier(base.expression)) {
-    throw new Error('Base classes require a simple name.')
+    throw new CompilerError('unsupported', 'Base classes require a simple name.', statement)
   }
 
   return base.expression.text
@@ -3693,8 +3946,10 @@ function methodSignatureOf(
   methodName: string,
 ): FunctionSignature {
   if (member.type === undefined) {
-    throw new Error(
+    throw new CompilerError(
+      'missing-annotation',
       `Method '${methodName}' of class '${className}' requires a return type annotation.`,
+      member,
     )
   }
 
@@ -3704,16 +3959,26 @@ function methodSignatureOf(
       { kind: 'reference', name: className, typeArguments: [] },
       ...member.parameters.map((parameter) => {
         if (parameter.dotDotDotToken !== undefined) {
-          throw new Error(`Rest parameters are not supported yet in method '${methodName}'.`)
+          throw new CompilerError(
+            'unsupported',
+            `Rest parameters are not supported yet in method '${methodName}'.`,
+            parameter,
+          )
         }
 
         if (parameter.questionToken !== undefined) {
-          throw new Error(`Optional parameters are not supported yet in method '${methodName}'.`)
+          throw new CompilerError(
+            'unsupported',
+            `Optional parameters are not supported yet in method '${methodName}'.`,
+            parameter,
+          )
         }
 
         if (parameter.type === undefined) {
-          throw new Error(
+          throw new CompilerError(
+            'missing-annotation',
             `Parameter '${parameterNameOf(parameter)}' of method '${methodName}' requires a type annotation.`,
+            parameter,
           )
         }
 
@@ -3737,20 +4002,26 @@ function constructorSignatureOf(
       { kind: 'reference', name: className, typeArguments: [] },
       ...member.parameters.map((parameter) => {
         if (parameter.dotDotDotToken !== undefined) {
-          throw new Error(
+          throw new CompilerError(
+            'unsupported',
             `Rest parameters are not supported yet in the constructor of '${className}'.`,
+            member,
           )
         }
 
         if (parameter.questionToken !== undefined) {
-          throw new Error(
+          throw new CompilerError(
+            'unsupported',
             `Optional parameters are not supported yet in the constructor of '${className}'.`,
+            member,
           )
         }
 
         if (parameter.type === undefined) {
-          throw new Error(
+          throw new CompilerError(
+            'missing-annotation',
             `Parameter '${parameterNameOf(parameter)}' of the constructor of '${className}' requires a type annotation.`,
+            member,
           )
         }
 

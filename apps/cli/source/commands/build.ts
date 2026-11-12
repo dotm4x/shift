@@ -4,7 +4,7 @@ import { Command } from 'commander'
 
 import { buildExecutable, requireClang } from '../services/clang.js'
 import { compileFile } from '../services/compiler.js'
-import { reportDiagnostics } from '../services/diagnostics.js'
+import { reportDiagnostics, reportError } from '../services/diagnostics.js'
 import { resolveInvocationPath } from '../services/paths.js'
 
 /** Options of the build command. */
@@ -23,26 +23,31 @@ export function buildCommand(): Command {
     .argument('<file>', 'Livescript source file')
     .option('-o, --output <path>', 'Path of the executable')
     .action((file: string, options: BuildOptions) => {
-      const { diagnostics, ir } = compileFile(file)
+      try {
+        const { diagnostics, ir } = compileFile(file)
 
-      if (reportDiagnostics(file, diagnostics)) {
+        if (reportDiagnostics(file, diagnostics)) {
+          process.exitCode = 1
+
+          return
+        }
+
+        requireClang()
+
+        const output = resolveInvocationPath(options.output ?? outputNameOf(file))
+        const status = buildExecutable(ir, output)
+
+        if (status !== 0) {
+          process.exitCode = status
+
+          return
+        }
+
+        console.log(`Compiled ${file} to ${output}`)
+      } catch (error) {
+        reportError(file, error)
         process.exitCode = 1
-
-        return
       }
-
-      requireClang()
-
-      const output = resolveInvocationPath(options.output ?? outputNameOf(file))
-      const status = buildExecutable(ir, output)
-
-      if (status !== 0) {
-        process.exitCode = status
-
-        return
-      }
-
-      console.log(`Compiled ${file} to ${output}`)
     })
 }
 

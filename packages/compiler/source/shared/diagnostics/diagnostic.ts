@@ -15,6 +15,8 @@ export interface Diagnostic {
   readonly severity: DiagnosticSeverity
   /** Source range the finding refers to. */
   readonly range: SourceRange
+  /** Suggestion to fix the finding, if any. */
+  readonly hint?: string
 }
 
 /**

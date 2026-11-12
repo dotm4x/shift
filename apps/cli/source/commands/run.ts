@@ -2,7 +2,7 @@ import { Command } from 'commander'
 
 import { buildAndRun, requireClang } from '../services/clang.js'
 import { compileFile } from '../services/compiler.js'
-import { reportDiagnostics } from '../services/diagnostics.js'
+import { reportDiagnostics, reportError } from '../services/diagnostics.js'
 
 /**
  * Creates the command that compiles a Livescript file and runs it.
@@ -14,16 +14,21 @@ export function runCommand(): Command {
     .description('Compile a Livescript file and run it')
     .argument('<file>', 'Livescript source file')
     .action((file: string) => {
-      const { diagnostics, ir } = compileFile(file)
+      try {
+        const { diagnostics, ir } = compileFile(file)
 
-      if (reportDiagnostics(file, diagnostics)) {
+        if (reportDiagnostics(file, diagnostics)) {
+          process.exitCode = 1
+
+          return
+        }
+
+        requireClang()
+
+        process.exitCode = buildAndRun(ir)
+      } catch (error) {
+        reportError(file, error)
         process.exitCode = 1
-
-        return
       }
-
-      requireClang()
-
-      process.exitCode = buildAndRun(ir)
     })
 }
