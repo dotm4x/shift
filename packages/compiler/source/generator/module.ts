@@ -1,5 +1,6 @@
 import { type FunctionSignature, LlvmFunction } from './function.js'
-import { formatStringBytes, type LlvmGlobal, type StringBytes } from './values.js'
+import type { LlvmGlobal, LlvmType, StringBytes } from './values.js'
+import { formatStringBytes } from './values.js'
 
 interface StringEntry {
   readonly bytes: StringBytes
@@ -13,6 +14,11 @@ export class LlvmModule {
   private readonly _declarations: string[] = []
   private readonly _declared: Set<string> = new Set<string>()
   private readonly _functions: LlvmFunction[] = []
+  private readonly _types: string[] = []
+  private readonly _typedNames: Set<string> = new Set<string>()
+  private readonly _globals: string[] = []
+  private readonly _globalNames: Set<string> = new Set<string>()
+  private _returnsTwice: boolean = false
   private readonly _strings: Map<string, StringEntry> = new Map<string, StringEntry>()
   private readonly _stringLengths: Map<string, number> = new Map<string, number>()
   private _stringCounter: number = 0
@@ -35,6 +41,22 @@ export class LlvmModule {
   }
 
   /**
+   * Adds a global variable definition, such as a vtable constant.
+   *
+   * @param line Full definition line of the global.
+   */
+  public addGlobal(line: string): void {
+    const name = line.slice(1, line.indexOf(' '))
+
+    if (this._globalNames.has(name)) {
+      return
+    }
+
+    this._globalNames.add(name)
+    this._globals.push(line)
+  }
+
+  /**
    * Declares an external function, such as one provided by libc.
    *
    * @param line Declaration line, for example `declare i32 @printf(ptr, ...)`.
@@ -46,6 +68,28 @@ export class LlvmModule {
 
     this._declared.add(line)
     this._declarations.push(line)
+  }
+
+  /**
+   * Declares a named LLVM structure type, such as `%Car = type { double }`.
+   *
+   * @param name Name of the type, including the `%` prefix.
+   * @param fields Field types of the structure.
+   */
+  public addTypeDefinition(name: string, fields: readonly LlvmType[]): void {
+    if (this._typedNames.has(name)) {
+      return
+    }
+
+    this._typedNames.add(name)
+    this._types.push(`%${name.slice(1)} = type { ${fields.join(', ')} }`)
+  }
+
+  /**
+   * Marks the module as calling a function that returns twice, such as setjmp.
+   */
+  public requireReturnsTwice(): void {
+    this._returnsTwice = true
   }
 
   /**
@@ -94,6 +138,10 @@ export class LlvmModule {
   public emit(): string {
     const parts: string[] = []
 
+    for (const global of this._globals) {
+      parts.push(global)
+    }
+
     for (const entry of this._strings.values()) {
       parts.push(
         `@${entry.global.name} = private unnamed_addr constant [${String(entry.bytes.length)} x i8] c"${entry.bytes.text}"`,
@@ -104,10 +152,20 @@ export class LlvmModule {
       parts.push(declaration)
     }
 
+    for (const definition of this._types) {
+      parts.push(definition)
+    }
+
     for (const added of this._functions) {
       parts.push(added.emit())
     }
 
-    return `${parts.join('\n\n')}\n`
+    let text = `${parts.join('\n\n')}\n`
+
+    if (this._returnsTwice) {
+      text += '\nattributes #0 = { returns_twice }\n'
+    }
+
+    return text
   }
 }

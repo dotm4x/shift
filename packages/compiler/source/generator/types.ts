@@ -1,12 +1,15 @@
 import type * as ts from 'typescript'
 
 import { typeFromNode } from '../analyzer/types/syntax.js'
-import type { Type } from '../analyzer/types/type.js'
+import type {
+  ArrayType,
+  PrimitiveType,
+  ReferenceType,
+  Type,
+  VoidType,
+} from '../analyzer/types/type.js'
 
 import type { LlvmType } from './values.js'
-
-/** Kind of a value while it is being generated. */
-export type ValueKind = 'boolean' | 'number' | 'string' | 'void'
 
 /**
  * Maps a language type to its LLVM IR type.
@@ -17,17 +20,30 @@ export type ValueKind = 'boolean' | 'number' | 'string' | 'void'
  */
 export function irTypeFromType(type: Type): LlvmType {
   if (type.kind === 'primitive') {
-    if (type.name === 'boolean') {
-      return 'i1'
+    const numeric: Partial<{ [key: string]: LlvmType }> = {
+      boolean: 'i1',
+      f32: 'float',
+      f64: 'double',
+      i16: 'i16',
+      i32: 'i32',
+      i64: 'i64',
+      i8: 'i8',
+      string: 'ptr',
+      u16: 'i16',
+      u32: 'i32',
+      u64: 'i64',
+      u8: 'i8',
+      usize: 'i64',
     }
+    const mapped = numeric[type.name]
 
-    if (type.name === 'number') {
-      return 'double'
+    if (mapped !== undefined) {
+      return mapped
     }
+  }
 
-    if (type.name === 'string') {
-      return 'ptr'
-    }
+  if (type.kind === 'array' || type.kind === 'reference') {
+    return 'ptr'
   }
 
   if (type.kind === 'void') {
@@ -48,47 +64,100 @@ export function irTypeFromNode(node: ts.TypeNode): LlvmType {
 }
 
 /**
- * Maps a value kind to its LLVM IR type.
+ * Returns the byte size of a type in the generated code.
  *
- * @param kind Kind of the value.
- * @returns Equivalent LLVM IR type.
+ * @param type Type from the language model.
+ * @returns Size in bytes.
  */
-export function irTypeFromKind(kind: ValueKind): LlvmType {
-  if (kind === 'boolean') {
-    return 'i1'
+export function sizeOf(type: Type): number {
+  if (type.kind === 'primitive') {
+    const sizes: Partial<{ [key: string]: number }> = {
+      boolean: 1,
+      f32: 4,
+      f64: 8,
+      i16: 2,
+      i32: 4,
+      i64: 8,
+      i8: 1,
+      string: 8,
+      u16: 2,
+      u32: 4,
+      u64: 8,
+      u8: 1,
+      usize: 8,
+    }
+    const size = sizes[type.name]
+
+    if (size !== undefined) {
+      return size
+    }
   }
 
-  if (kind === 'number') {
-    return 'double'
+  if (type.kind === 'array' || type.kind === 'reference') {
+    return 8
   }
 
-  if (kind === 'string') {
-    return 'ptr'
-  }
-
-  return 'void'
+  throw new Error(`Unsupported type for code generation: ${describe(type)}.`)
 }
 
-/**
- * Maps an LLVM IR type back to its value kind.
- *
- * @param type LLVM IR type.
- * @returns Equivalent value kind.
- */
-export function irKindFromType(type: LlvmType): ValueKind {
-  if (type === 'double') {
-    return 'number'
-  }
+/** Determines whether the type is a signed integer. */
+export function isSignedInteger(type: Type): type is PrimitiveType {
+  return (
+    type.kind === 'primitive' &&
+    (type.name === 'i8' || type.name === 'i16' || type.name === 'i32' || type.name === 'i64')
+  )
+}
 
-  if (type === 'i1') {
-    return 'boolean'
-  }
+/** Determines whether the type is an unsigned integer. */
+export function isUnsignedInteger(type: Type): type is PrimitiveType {
+  return (
+    type.kind === 'primitive' &&
+    (type.name === 'u8' ||
+      type.name === 'u16' ||
+      type.name === 'u32' ||
+      type.name === 'u64' ||
+      type.name === 'usize')
+  )
+}
 
-  if (type === 'ptr') {
-    return 'string'
-  }
+/** Determines whether the type is an integer of any signedness. */
+export function isIntegerType(type: Type): type is PrimitiveType {
+  return isSignedInteger(type) || isUnsignedInteger(type)
+}
 
-  return 'void'
+/** Determines whether the type is a floating point number. */
+export function isFloatType(type: Type): type is PrimitiveType {
+  return type.kind === 'primitive' && (type.name === 'f32' || type.name === 'f64')
+}
+
+/** Determines whether the type is any number. */
+export function isNumericType(type: Type): type is PrimitiveType {
+  return isIntegerType(type) || isFloatType(type)
+}
+
+/** Determines whether the type is void. */
+export function isVoidType(type: Type): type is VoidType {
+  return type.kind === 'void'
+}
+
+/** Determines whether the type is a boolean. */
+export function isBooleanType(type: Type): type is PrimitiveType {
+  return type.kind === 'primitive' && type.name === 'boolean'
+}
+
+/** Determines whether the type is a string. */
+export function isStringType(type: Type): type is PrimitiveType {
+  return type.kind === 'primitive' && type.name === 'string'
+}
+
+/** Determines whether the type is an array. */
+export function isArrayType(type: Type): type is ArrayType {
+  return type.kind === 'array'
+}
+
+/** Determines whether the type refers to a class instance. */
+export function isReferenceType(type: Type): type is ReferenceType {
+  return type.kind === 'reference'
 }
 
 /**

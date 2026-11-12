@@ -1,10 +1,13 @@
+import type { Type } from '../analyzer/types/type.js'
+
+import { irTypeFromType } from './types.js'
 import type { LlvmGlobal, LlvmLocal, LlvmOperand, LlvmType } from './values.js'
 
 /** Signature of a function in the module. */
 export interface FunctionSignature {
   readonly name: string
-  readonly parameterTypes: readonly LlvmType[]
-  readonly returnType: LlvmType
+  readonly parameterTypes: readonly Type[]
+  readonly returnType: Type
 }
 
 /** An argument passed to a call. */
@@ -17,6 +20,13 @@ interface Block {
   label: string
   lines: string[]
   terminated: boolean
+}
+
+/**
+ * Maps a language type to its LLVM IR type.
+ */
+function irTypeOf(type: Type): LlvmType {
+  return irTypeFromType(type)
 }
 
 /**
@@ -85,6 +95,21 @@ export class LlvmFunction {
     const name = this.uniqueName(`${hint}.addr`)
 
     this._allocas.push(`%${name} = alloca ${type}`)
+
+    return { kind: 'local', name }
+  }
+
+  /**
+   * Reserves raw stack bytes in the entry block.
+   *
+   * @param bytes Number of bytes to reserve.
+   * @param hint Name of the buffer.
+   * @returns Pointer to the buffer.
+   */
+  public allocaBytes(bytes: number, hint: string): LlvmLocal {
+    const name = this.uniqueName(`${hint}.addr`)
+
+    this._allocas.push(`%${name} = alloca i8, i64 ${String(bytes)}`)
 
     return { kind: 'local', name }
   }
@@ -166,6 +191,24 @@ export class LlvmFunction {
   }
 
   /**
+   * Emits a conversion instruction, such as `sext`, `trunc` or `sitofp`.
+   *
+   * @param opcode Conversion opcode.
+   * @param sourceType Type of the operand.
+   * @param operand Operand to convert.
+   * @param targetType Type to convert to.
+   * @returns Converted value.
+   */
+  public cast(
+    opcode: string,
+    sourceType: LlvmType,
+    operand: LlvmOperand,
+    targetType: LlvmType,
+  ): LlvmLocal {
+    return this.emitValue(`${opcode} ${sourceType} ${this.operand(operand)} to ${targetType}`)
+  }
+
+  /**
    * Selects between two values based on a boolean condition.
    *
    * @param type Type of the selected value.
@@ -196,6 +239,93 @@ export class LlvmFunction {
     return this.emitValue(
       `getelementptr inbounds [${String(byteLength)} x i8], ptr @${global.name}, i64 0, i64 0`,
     )
+  }
+
+  /**
+   * Returns a pointer to a field of a structure.
+   *
+   * @param structureType Name of the LLVM structure type, such as `%Car`.
+   * @param base Pointer to the structure.
+   * @param index Field index.
+   * @returns Pointer to the field.
+   */
+  public fieldPointer(structureType: string, base: LlvmOperand, index: number): LlvmLocal {
+    return this.emitValue(
+      `getelementptr inbounds ${structureType}, ptr ${this.operand(base)}, i64 0, i32 ${String(index)}`,
+    )
+  }
+
+  /**
+   * Returns a pointer to an element of an array of the given element type.
+   *
+   * @param elementType Name of the LLVM element type, such as `ptr`.
+   * @param base Pointer to the array.
+   * @param index i64 index of the element.
+   * @returns Pointer to the element.
+   */
+  public elementPointer(elementType: string, base: LlvmOperand, index: LlvmOperand): LlvmLocal {
+    return this.emitValue(
+      `getelementptr inbounds ${elementType}, ptr ${this.operand(base)}, i64 ${this.operand(index)}`,
+    )
+  }
+
+  /**
+   * Returns a pointer to a byte at a byte offset from a base pointer.
+   *
+   * @param base Base pointer.
+   * @param byteOffset Byte offset, as an i64 operand.
+   * @returns Pointer to the byte.
+   */
+  public bytePointer(base: LlvmOperand, byteOffset: LlvmOperand): LlvmLocal {
+    return this.emitValue(
+      `getelementptr inbounds i8, ptr ${this.operand(base)}, i64 ${this.operand(byteOffset)}`,
+    )
+  }
+
+  /**
+   * Calls a function through a function pointer.
+   *
+   * @param returnType Return type of the callee.
+   * @param functionPointer Pointer to the function.
+   * @param args Arguments of the call.
+   * @returns Returned value, or `undefined` for void calls.
+   */
+  public callValue(
+    returnType: LlvmType,
+    functionPointer: LlvmOperand,
+    args: readonly CallArgument[],
+  ): LlvmLocal | undefined {
+    const argumentsText = args
+      .map((argument) => `${argument.type} ${this.operand(argument.value)}`)
+      .join(', ')
+    const text = `call ${returnType} ${this.operand(functionPointer)}(${argumentsText})`
+
+    if (returnType === 'void') {
+      this.add(text)
+
+      return undefined
+    }
+
+    return this.emitValue(text)
+  }
+
+  /**
+   * Branches to a label based on an integer switch value.
+   *
+   * @param value i32 operand to switch on.
+   * @param defaultLabel Label for unmatched values.
+   * @param cases Matched values and their labels.
+   */
+  public switchValue(
+    value: LlvmOperand,
+    defaultLabel: string,
+    cases: readonly { label: string; value: number }[],
+  ): void {
+    const casesText = cases
+      .map((entry) => `i32 ${String(entry.value)}, label %${entry.label}`)
+      .join(' ')
+
+    this.addTerminator(`switch i32 ${this.operand(value)}, label %${defaultLabel} [ ${casesText} ]`)
   }
 
   /**
@@ -245,7 +375,7 @@ export class LlvmFunction {
    */
   public emit(): string {
     const lines: string[] = [
-      `define ${this._signature.returnType} @${this._signature.name}(${this.parametersText()}) {`,
+      `define ${irTypeOf(this._signature.returnType)} @${this._signature.name}(${this.parametersText()}) {`,
     ]
     const entry = this._blocks[0]
 
@@ -279,7 +409,7 @@ export class LlvmFunction {
           throw new Error(`Parameter '${name}' has no type.`)
         }
 
-        return `${type} %${name}`
+        return `${irTypeOf(type)} %${name}`
       })
       .join(', ')
   }

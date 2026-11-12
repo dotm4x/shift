@@ -1,5 +1,5 @@
 /** LLVM IR types used by the generator. */
-export type LlvmType = 'double' | 'i1' | 'i32' | 'i8' | 'ptr' | 'void'
+export type LlvmType = 'double' | 'float' | 'i1' | 'i16' | 'i32' | 'i64' | 'i8' | 'ptr' | 'void'
 
 /** A register local to a function. */
 export interface LlvmLocal {

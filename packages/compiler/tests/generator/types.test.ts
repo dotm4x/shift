@@ -1,13 +1,20 @@
 import * as ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
-import { booleanType, numberType, stringType, voidType } from '../../source/analyzer/types/type.js'
 import {
-  irKindFromType,
-  irTypeFromKind,
-  irTypeFromNode,
-  irTypeFromType,
-} from '../../source/generator/types.js'
+  booleanType,
+  f32Type,
+  f64Type,
+  i8Type,
+  i32Type,
+  i64Type,
+  stringType,
+  u8Type,
+  u32Type,
+  u64Type,
+  usizeType,
+} from '../../source/analyzer/types/type.js'
+import { irTypeFromNode, irTypeFromType, sizeOf } from '../../source/generator/types.js'
 import { Parser } from '../../source/parser/parser.js'
 import { DiagnosticBag } from '../../source/shared/diagnostics/bag.js'
 
@@ -29,15 +36,25 @@ function typeNodeOf(source: string): ts.TypeNode {
 }
 
 describe('irTypeFromType', () => {
-  it('maps supported language types', () => {
-    expect(irTypeFromType(numberType)).toBe('double')
+  it('maps the numeric zoo', () => {
+    expect(irTypeFromType(i8Type)).toBe('i8')
+    expect(irTypeFromType(i32Type)).toBe('i32')
+    expect(irTypeFromType(i64Type)).toBe('i64')
+    expect(irTypeFromType(u8Type)).toBe('i8')
+    expect(irTypeFromType(u32Type)).toBe('i32')
+    expect(irTypeFromType(u64Type)).toBe('i64')
+    expect(irTypeFromType(usizeType)).toBe('i64')
+    expect(irTypeFromType(f32Type)).toBe('float')
+    expect(irTypeFromType(f64Type)).toBe('double')
+  })
+
+  it('maps the other primitives', () => {
     expect(irTypeFromType(booleanType)).toBe('i1')
     expect(irTypeFromType(stringType)).toBe('ptr')
-    expect(irTypeFromType(voidType)).toBe('void')
   })
 
   it('throws for unsupported language types', () => {
-    expect(() => irTypeFromType({ kind: 'tuple', elementTypes: [numberType] })).toThrow(
+    expect(() => irTypeFromType({ kind: 'tuple', elementTypes: [i32Type] })).toThrow(
       'Unsupported type for code generation',
     )
   })
@@ -45,22 +62,19 @@ describe('irTypeFromType', () => {
 
 describe('irTypeFromNode', () => {
   it('maps type nodes from the syntax tree', () => {
-    expect(irTypeFromNode(typeNodeOf('number'))).toBe('double')
+    expect(irTypeFromNode(typeNodeOf('i32'))).toBe('i32')
+    expect(irTypeFromNode(typeNodeOf('f64'))).toBe('double')
     expect(irTypeFromNode(typeNodeOf('string'))).toBe('ptr')
-    expect(irTypeFromNode(typeNodeOf('boolean'))).toBe('i1')
   })
 })
 
-describe('kind conversions', () => {
-  it('maps kinds to IR types and back', () => {
-    expect(irTypeFromKind('number')).toBe('double')
-    expect(irTypeFromKind('boolean')).toBe('i1')
-    expect(irTypeFromKind('string')).toBe('ptr')
-    expect(irTypeFromKind('void')).toBe('void')
-
-    expect(irKindFromType('double')).toBe('number')
-    expect(irKindFromType('i1')).toBe('boolean')
-    expect(irKindFromType('ptr')).toBe('string')
-    expect(irKindFromType('void')).toBe('void')
+describe('sizeOf', () => {
+  it('returns the byte size of types', () => {
+    expect(sizeOf(i8Type)).toBe(1)
+    expect(sizeOf(i32Type)).toBe(4)
+    expect(sizeOf(i64Type)).toBe(8)
+    expect(sizeOf(f64Type)).toBe(8)
+    expect(sizeOf(stringType)).toBe(8)
+    expect(sizeOf(booleanType)).toBe(1)
   })
 })

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { voidType } from '../../source/analyzer/types/type.js'
 import { LlvmModule } from '../../source/generator/module.js'
 
 describe('LlvmModule', () => {
@@ -25,7 +26,9 @@ describe('LlvmModule', () => {
   it('emits globals before functions', () => {
     const module = new LlvmModule()
     module.addStringLiteral('hi')
-    module.addFunction({ name: 'sample', parameterTypes: [], returnType: 'void' }, []).returnVoid()
+    module
+      .addFunction({ name: 'sample', parameterTypes: [], returnType: voidType }, [])
+      .returnVoid()
 
     expect(module.emit()).toBe(
       [

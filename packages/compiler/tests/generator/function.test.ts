@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
+import { f64Type, voidType } from '../../source/analyzer/types/type.js'
 import { LlvmFunction } from '../../source/generator/function.js'
 
 function create(): LlvmFunction {
-  return new LlvmFunction({ name: 'sample', parameterTypes: ['double'], returnType: 'double' }, [
+  return new LlvmFunction({ name: 'sample', parameterTypes: [f64Type], returnType: f64Type }, [
     'value',
   ])
 }
@@ -16,7 +17,7 @@ describe('LlvmFunction', () => {
   })
 
   it('hoists allocas into the entry block', () => {
-    const added = new LlvmFunction({ name: 'sample', parameterTypes: [], returnType: 'void' }, [])
+    const added = new LlvmFunction({ name: 'sample', parameterTypes: [], returnType: voidType }, [])
     added.alloca('double', 'value')
     added.returnVoid()
     added.startBlock(added.reserveLabel('next'))
@@ -92,7 +93,7 @@ describe('LlvmFunction', () => {
   })
 
   it('renders calls and branches', () => {
-    const added = new LlvmFunction({ name: 'sample', parameterTypes: [], returnType: 'void' }, [])
+    const added = new LlvmFunction({ name: 'sample', parameterTypes: [], returnType: voidType }, [])
     const thenLabel = added.reserveLabel('if.then')
     const endLabel = added.reserveLabel('if.end')
     added.branch({ kind: 'constant', type: 'i1', text: '1' }, thenLabel, endLabel)
