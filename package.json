@@ -13,7 +13,7 @@
     "format:files": "prettier --write",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
-    "shift": "node apps/cli/dist/main.js",
+    "shiftc": "node apps/cli/dist/main.js",
     "prepare": "husky"
   },
   "lint-staged": {

@@ -14,7 +14,7 @@ function collectFilters(value: string, previous: readonly string[]): string[] {
 }
 
 program
-  .name('shift')
+  .name('shiftc')
   .description('The Shift compiler CLI')
   .version('0.1.0')
   .option(
