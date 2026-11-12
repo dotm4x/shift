@@ -1,0 +1,9 @@
+{
+  "name": "calculator",
+  "members": ["apps/*", "packages/*"],
+  "scripts": {
+    "install": "node \"$LIVESCRIPT\" package add-local packages/mathlib && node \"$LIVESCRIPT\" install",
+    "build": "node \"$LIVESCRIPT\" build",
+    "test": "cd apps/calc && node \"$LIVESCRIPT\" run"
+  }
+}

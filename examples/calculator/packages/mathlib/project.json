@@ -1,0 +1,7 @@
+{
+  "name": "@calculator/mathlib",
+  "version": "1.0.0",
+  "description": "Math helpers for the calculator example",
+  "type": "library",
+  "entry": "src/index.ls"
+}

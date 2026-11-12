@@ -1,0 +1,12 @@
+{
+  "lockfileVersion": 1,
+  "packages": {
+    "@calculator/mathlib@1.0.0": {
+      "name": "@calculator/mathlib",
+      "version": "1.0.0",
+      "integrity": "6c5c4a8e0b0dc5d801ae541f5290daf22566a3b3a58fc98d66ae16fa88922e51",
+      "source": "local",
+      "dependencies": {}
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@calculator/calc",
+  "version": "1.0.0",
+  "description": "Calculator example application",
+  "type": "executable",
+  "entry": "src/main.ls",
+  "dependencies": {
+    "@calculator/mathlib": "^1.0.0"
+  },
+  "scripts": {
+    "start": "node \"$LIVESCRIPT\" run",
+    "build": "node \"$LIVESCRIPT\" build"
+  }
+}
