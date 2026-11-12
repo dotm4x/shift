@@ -3,11 +3,7 @@ import { join } from 'node:path'
 
 import { Command } from 'commander'
 
-import {
-  discoverWorkspaceProjects,
-  findWorkspaceRoot,
-  readWorkspaceManifest,
-} from '@livescript/project'
+import { discoverWorkspaceProjects, findWorkspaceRoot, readWorkspaceManifest } from '@shift/project'
 
 import { reportError } from '../services/diagnostics.js'
 import {

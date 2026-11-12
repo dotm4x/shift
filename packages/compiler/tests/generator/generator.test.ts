@@ -367,7 +367,7 @@ describe('Generator', () => {
 
     expect(ir).toContain('declare i32 @setjmp(ptr) #0')
     expect(ir).toContain('declare void @longjmp(ptr, i32)')
-    expect(ir).toContain('@livescript.handlers = global [64 x ptr] zeroinitializer')
+    expect(ir).toContain('@shift.handlers = global [64 x ptr] zeroinitializer')
     expect(ir).toContain('call i32 @setjmp(ptr')
     expect(ir).toContain('attributes #0 = { returns_twice }')
   })

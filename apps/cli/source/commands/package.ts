@@ -1,6 +1,6 @@
 import { Command } from 'commander'
 
-import { addArchivePackage, detectArchiveFormat, PackageStore } from '@livescript/project'
+import { addArchivePackage, detectArchiveFormat, PackageStore } from '@shift/project'
 
 import { resolveInvocationPath } from '../services/paths.js'
 

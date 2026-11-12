@@ -2,7 +2,7 @@ import { dirname, isAbsolute, join, parse } from 'node:path'
 
 import { Command } from 'commander'
 
-import { findWorkspaceRoot, type ProjectManifest } from '@livescript/project'
+import { findWorkspaceRoot, type ProjectManifest } from '@shift/project'
 
 import { buildProjectAt, buildWorkspace } from '../services/build.js'
 import { buildModules, requireClang } from '../services/clang.js'
@@ -26,7 +26,7 @@ export interface BuildOptions {
 }
 
 /**
- * Creates the command that compiles Livescript sources into native executables.
+ * Creates the command that compiles Shift sources into native executables.
  *
  * Without arguments it builds the current project, or every executable project of the current
  * workspace in topological order. The global `--filter` option restricts workspace builds to
@@ -36,8 +36,8 @@ export interface BuildOptions {
  */
 export function buildCommand(): Command {
   const command = new Command('build')
-    .description('Compile a Livescript file, the current project, or a whole workspace')
-    .argument('[file]', 'Livescript source file')
+    .description('Compile a Shift file, the current project, or a whole workspace')
+    .argument('[file]', 'Shift source file')
     .option('-g, --global <name...>', 'Names available in the global scope without being declared')
     .option('-o, --output <path>', 'Path of the executable')
     .option('--path <directory>', 'Run the command as if started in the given directory')

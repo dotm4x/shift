@@ -125,7 +125,7 @@ export function addArchivePackage(store: PackageStore, archivePath: string): Sto
   }
 
   const entries = format === 'zip' ? readZip(buffer) : readTar(buffer)
-  const directory = mkdtempSync(join(tmpdir(), 'livescript-archive-'))
+  const directory = mkdtempSync(join(tmpdir(), 'shift-archive-'))
 
   try {
     extractEntries(entries, directory)

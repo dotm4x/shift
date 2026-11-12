@@ -11,10 +11,10 @@ const clangAvailable = spawnSync('clang', ['--version'], { stdio: 'ignore' }).er
 
 describe.skipIf(!existsSync(cli) || !clangAvailable)('CLI end-to-end', () => {
   it('builds and runs a program', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'livescript-'))
+    const directory = mkdtempSync(join(tmpdir(), 'shift-'))
 
     try {
-      const file = join(directory, 'sample.ls')
+      const file = join(directory, 'sample.shift')
       writeFileSync(file, 'print("ok")')
       const built = spawnSync(process.execPath, [
         cli,
@@ -36,10 +36,10 @@ describe.skipIf(!existsSync(cli) || !clangAvailable)('CLI end-to-end', () => {
   })
 
   it('fails for invalid programs', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'livescript-'))
+    const directory = mkdtempSync(join(tmpdir(), 'shift-'))
 
     try {
-      const file = join(directory, 'broken.ls')
+      const file = join(directory, 'broken.shift')
       writeFileSync(file, 'let value = missing')
       const result = spawnSync(process.execPath, [cli, 'run', file])
 

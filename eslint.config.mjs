@@ -121,7 +121,7 @@ export default defineConfig(
         'error',
         {
           type: 'natural',
-          internalPattern: ['^@livescript/.+'],
+          internalPattern: ['^@shift/.+'],
           groups: [
             ['value-builtin', 'type-builtin'],
             ['value-external', 'type-external'],

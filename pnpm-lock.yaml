@@ -217,10 +217,10 @@ importers:
 
   apps/cli:
     dependencies:
-      '@livescript/compiler':
+      '@shift/compiler':
         specifier: workspace:*
         version: link:../../packages/compiler
-      '@livescript/project':
+      '@shift/project':
         specifier: workspace:*
         version: link:../../packages/project
       commander:

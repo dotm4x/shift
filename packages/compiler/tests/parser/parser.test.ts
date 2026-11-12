@@ -38,13 +38,13 @@ describe('Parser', () => {
   })
 
   it('uses the provided file name', () => {
-    const file = new Parser({ fileName: 'main.ls' }).parse('let x = 1', new DiagnosticBag())
+    const file = new Parser({ fileName: 'main.shift' }).parse('let x = 1', new DiagnosticBag())
 
-    expect(file.fileName).toBe('main.ls')
+    expect(file.fileName).toBe('main.shift')
   })
 
-  it('defaults to a Livescript file name', () => {
-    expect(parse('').file.fileName).toBe('source.ls')
+  it('defaults to a Shift file name', () => {
+    expect(parse('').file.fileName).toBe('source.shift')
   })
 
   it('links parent nodes so the tree can be traversed', () => {

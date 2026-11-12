@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseProjectManifest } from '@livescript/project'
+import { parseProjectManifest } from '@shift/project'
 
 import {
   entryOf,
@@ -34,17 +34,17 @@ describe('matchesFilters', () => {
 
 describe('entryOf', () => {
   it('returns the declared entry', () => {
-    const manifest = parseProjectManifest('{"name":"a","version":"1.0.0","entry":"src/main.ls"}')
+    const manifest = parseProjectManifest('{"name":"a","version":"1.0.0","entry":"src/main.shift"}')
 
-    expect(entryOf(manifest)).toBe('src/main.ls')
+    expect(entryOf(manifest)).toBe('src/main.shift')
   })
 
   it('defaults by project type', () => {
     const executable = parseProjectManifest('{"name":"a","version":"1.0.0","type":"executable"}')
     const library = parseProjectManifest('{"name":"a","version":"1.0.0","type":"library"}')
 
-    expect(entryOf(executable)).toBe('src/main.ls')
-    expect(entryOf(library)).toBe('src/index.ls')
+    expect(entryOf(executable)).toBe('src/main.shift')
+    expect(entryOf(library)).toBe('src/index.shift')
   })
 })
 

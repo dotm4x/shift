@@ -6,7 +6,7 @@ import { commandFactories } from './commands/index.js'
 const program = new Command()
 
 /**
- * Collects repeated `--filter` values into a list, so `livescript --filter a --filter b run`
+ * Collects repeated `--filter` values into a list, so `shift --filter a --filter b run`
  * selects both projects.
  */
 function collectFilters(value: string, previous: readonly string[]): string[] {
@@ -14,8 +14,8 @@ function collectFilters(value: string, previous: readonly string[]): string[] {
 }
 
 program
-  .name('livescript')
-  .description('The Livescript compiler CLI')
+  .name('shift')
+  .description('The Shift compiler CLI')
   .version('0.1.0')
   .option(
     '-f, --filter <name>',

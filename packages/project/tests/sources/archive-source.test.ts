@@ -10,7 +10,7 @@ import { PackageStore } from '../../source/store/package-store.js'
 let directories: string[] = []
 
 function createTemporaryDirectory(): string {
-  const directory = mkdtempSync(join(tmpdir(), 'livescript-archive-'))
+  const directory = mkdtempSync(join(tmpdir(), 'shift-archive-'))
   directories.push(directory)
 
   return directory
@@ -81,7 +81,7 @@ describe('addArchivePackage', () => {
         name: 'core/project.json',
         data: Buffer.from('{"name":"@fable/core","version":"1.0.0","type":"library"}'),
       },
-      { name: 'core/index.ls', data: Buffer.from('export function hello() {}') },
+      { name: 'core/index.shift', data: Buffer.from('export function hello() {}') },
     ])
 
     rmSync(archive, { force: true })

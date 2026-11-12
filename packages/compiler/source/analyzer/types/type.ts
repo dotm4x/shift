@@ -1,4 +1,4 @@
-/** Kind of a Livescript type. */
+/** Kind of a Shift type. */
 export type TypeKind =
   | 'array'
   | 'boolean'
@@ -165,7 +165,7 @@ export interface VoidType {
   readonly kind: 'void'
 }
 
-/** Any Livescript type. */
+/** Any Shift type. */
 export type Type =
   | ArrayType
   | ConditionalType

@@ -1,6 +1,6 @@
 import { Command } from 'commander'
 
-import type { ProjectManifest } from '@livescript/project'
+import type { ProjectManifest } from '@shift/project'
 
 import {
   findProjectRoot,

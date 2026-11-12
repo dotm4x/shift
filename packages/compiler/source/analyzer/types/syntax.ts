@@ -48,10 +48,10 @@ const removedKeywords: { [kind in ts.SyntaxKind]?: string } = {
 }
 
 /**
- * Converts a type node produced by the parser into a Livescript type.
+ * Converts a type node produced by the parser into a Shift type.
  *
  * @param node Type node from the syntax tree.
- * @returns The equivalent Livescript type.
+ * @returns The equivalent Shift type.
  * @throws When the node uses type syntax that has no representation in the model yet.
  */
 export function typeFromNode(node: ts.TypeNode): Type {

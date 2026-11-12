@@ -2,8 +2,8 @@
   "name": "calculator",
   "members": ["apps/*", "packages/*"],
   "scripts": {
-    "install": "node \"$LIVESCRIPT\" package add-local packages/mathlib && node \"$LIVESCRIPT\" install",
-    "build": "node \"$LIVESCRIPT\" build",
-    "test": "cd apps/calc && node \"$LIVESCRIPT\" run"
+    "install": "node \"$SHIFT\" package add-local packages/mathlib && node \"$SHIFT\" install",
+    "build": "node \"$SHIFT\" build",
+    "test": "cd apps/calc && node \"$SHIFT\" run"
   }
 }

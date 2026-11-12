@@ -6,8 +6,8 @@ describe('ModuleResolver', () => {
   it('resolves relative specifiers', () => {
     const resolver = new ModuleResolver()
 
-    expect(resolver.resolve('./math', 'src/lib/main.ls')).toBe('src/lib/./math')
-    expect(resolver.resolve('../util', 'src/lib/main.ls')).toBe('src/lib/../util')
+    expect(resolver.resolve('./math', 'src/lib/main.shift')).toBe('src/lib/./math')
+    expect(resolver.resolve('../util', 'src/lib/main.shift')).toBe('src/lib/../util')
   })
 
   it('resolves alias specifiers', () => {

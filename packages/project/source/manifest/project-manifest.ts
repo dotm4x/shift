@@ -19,7 +19,7 @@ export interface ProjectCompilerConfiguration {
   readonly globals?: readonly string[]
 }
 
-/** A parsed and validated LiveScript project manifest (`project.json`). */
+/** A parsed and validated Shift project manifest (`project.json`). */
 export interface ProjectManifest {
   /** Project or package name, possibly hierarchical (`@fable/core/graphics`). */
   readonly name: string
@@ -31,7 +31,7 @@ export interface ProjectManifest {
   readonly description?: string
   /** Entry source file, relative to the project root. */
   readonly entry?: string
-  /** Required LiveScript SDK version. */
+  /** Required Shift SDK version. */
   readonly sdk?: string
   /** Runtime dependencies, mapped to version constraints. */
   readonly dependencies?: Readonly<{ [key: string]: string }>

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 import { Command } from 'commander'
 
-import { findWorkspaceRoot, readWorkspaceManifest } from '@livescript/project'
+import { findWorkspaceRoot, readWorkspaceManifest } from '@shift/project'
 
 import {
   findProjectRoot,
@@ -62,7 +62,7 @@ export function scriptCommand(): Command {
         const cliPath = cliEntryPath()
 
         if (cliPath !== undefined) {
-          environment.LIVESCRIPT = cliPath
+          environment.SHIFT = cliPath
         }
 
         const result = spawnSync(commandText, {

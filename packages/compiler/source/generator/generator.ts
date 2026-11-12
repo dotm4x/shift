@@ -893,10 +893,10 @@ export class Generator {
       throw new CompilerError('type-mismatch', 'Throw requires a string.', node)
     }
 
-    context.module.addGlobal('@livescript.thrown = global ptr zeroinitializer')
-    builder.store('ptr', value.operand, { kind: 'global', name: 'livescript.thrown' })
+    context.module.addGlobal('@shift.thrown = global ptr zeroinitializer')
+    builder.store('ptr', value.operand, { kind: 'global', name: 'shift.thrown' })
 
-    const count = builder.load('i64', { kind: 'global', name: 'livescript.handler_count' })
+    const count = builder.load('i64', { kind: 'global', name: 'shift.handler_count' })
     const hasHandler = builder.binary('i64', 'icmp ugt', count, {
       kind: 'constant',
       type: 'i64',
@@ -908,20 +908,20 @@ export class Generator {
     builder.branch(hasHandler, throwLabel, panicLabel)
 
     builder.startBlock(throwLabel)
-    const slot = builder.load('i64', { kind: 'global', name: 'livescript.handler_count' })
+    const slot = builder.load('i64', { kind: 'global', name: 'shift.handler_count' })
     const last = builder.binary('i64', 'sub', slot, {
       kind: 'constant',
       type: 'i64',
       text: '1',
     })
-    const table = builder.load('ptr', { kind: 'global', name: 'livescript.handlers' })
+    const table = builder.load('ptr', { kind: 'global', name: 'shift.handlers' })
     const bufferPointer = builder.elementPointer('ptr', table, last)
     const buffer = builder.load('ptr', bufferPointer)
 
     builder.store(
       'i64',
       builder.binary('i64', 'sub', slot, { kind: 'constant', type: 'i64', text: '1' }),
-      { kind: 'global', name: 'livescript.handler_count' },
+      { kind: 'global', name: 'shift.handler_count' },
     )
     builder.call('void', 'longjmp', [
       { type: 'ptr', value: buffer },
@@ -2092,8 +2092,8 @@ export class Generator {
         }
 
         const pointer = builder.alloca('ptr', declaration.name.text)
-        context.module.addGlobal('@livescript.thrown = global ptr zeroinitializer')
-        const thrown = builder.load('ptr', { kind: 'global', name: 'livescript.thrown' })
+        context.module.addGlobal('@shift.thrown = global ptr zeroinitializer')
+        const thrown = builder.load('ptr', { kind: 'global', name: 'shift.thrown' })
         builder.store('ptr', thrown, pointer)
         this.declareVariable(declaration.name.text, pointer, stringType, context)
       }
@@ -5198,7 +5198,7 @@ export class Generator {
       context.panicEmitted = true
 
       const panicBuilder = context.module.addFunction(
-        { name: 'livescript.panic', parameterTypes: [stringType], returnType: voidType },
+        { name: 'shift.panic', parameterTypes: [stringType], returnType: voidType },
         ['message'],
       )
       const stderr = panicBuilder.load('ptr', { kind: 'global', name: 'stderr' })
@@ -5222,7 +5222,7 @@ export class Generator {
 
     const messagePointer = this.stringPointer(message, builder, context)
 
-    builder.call('void', 'livescript.panic', [{ type: 'ptr', value: messagePointer }])
+    builder.call('void', 'shift.panic', [{ type: 'ptr', value: messagePointer }])
     builder.unreachable()
   }
 
@@ -5629,22 +5629,18 @@ export class Generator {
     builder: LlvmFunction,
     context: GenerationContext,
   ): void {
-    context.module.addGlobal('@livescript.handlers = global [64 x ptr] zeroinitializer')
-    context.module.addGlobal('@livescript.handler_count = global i64 zeroinitializer')
+    context.module.addGlobal('@shift.handlers = global [64 x ptr] zeroinitializer')
+    context.module.addGlobal('@shift.handler_count = global i64 zeroinitializer')
 
-    const count = builder.load('i64', { kind: 'global', name: 'livescript.handler_count' })
-    const slot = builder.elementPointer(
-      'ptr',
-      { kind: 'global', name: 'livescript.handlers' },
-      count,
-    )
+    const count = builder.load('i64', { kind: 'global', name: 'shift.handler_count' })
+    const slot = builder.elementPointer('ptr', { kind: 'global', name: 'shift.handlers' }, count)
     const slotPointer = slot
 
     builder.store('ptr', buffer, slotPointer)
     builder.store(
       'i64',
       builder.binary('i64', 'add', count, { kind: 'constant', type: 'i64', text: '1' }),
-      { kind: 'global', name: 'livescript.handler_count' },
+      { kind: 'global', name: 'shift.handler_count' },
     )
     builder.store('i64', count, baseCount)
   }
@@ -5653,14 +5649,14 @@ export class Generator {
    * Removes the innermost handler from the handler stack.
    */
   private popHandler(builder: LlvmFunction, context: GenerationContext): void {
-    context.module.addGlobal('@livescript.handler_count = global i64 zeroinitializer')
+    context.module.addGlobal('@shift.handler_count = global i64 zeroinitializer')
 
-    const count = builder.load('i64', { kind: 'global', name: 'livescript.handler_count' })
+    const count = builder.load('i64', { kind: 'global', name: 'shift.handler_count' })
 
     builder.store(
       'i64',
       builder.binary('i64', 'sub', count, { kind: 'constant', type: 'i64', text: '1' }),
-      { kind: 'global', name: 'livescript.handler_count' },
+      { kind: 'global', name: 'shift.handler_count' },
     )
   }
 
@@ -5672,10 +5668,10 @@ export class Generator {
     builder: LlvmFunction,
     context: GenerationContext,
   ): void {
-    context.module.addGlobal('@livescript.handler_count = global i64 zeroinitializer')
+    context.module.addGlobal('@shift.handler_count = global i64 zeroinitializer')
     const count = builder.load('i64', baseCount)
 
-    builder.store('i64', count, { kind: 'global', name: 'livescript.handler_count' })
+    builder.store('i64', count, { kind: 'global', name: 'shift.handler_count' })
   }
 
   /**

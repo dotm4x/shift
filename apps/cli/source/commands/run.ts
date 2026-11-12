@@ -7,7 +7,7 @@ import {
   findWorkspaceRoot,
   readWorkspaceManifest,
   topologicalOrder,
-} from '@livescript/project'
+} from '@shift/project'
 
 import { buildAndRunModules, requireClang } from '../services/clang.js'
 import { compileProject } from '../services/compiler.js'
@@ -28,7 +28,7 @@ export interface RunOptions {
 }
 
 /**
- * Creates the command that compiles and runs Livescript programs.
+ * Creates the command that compiles and runs Shift programs.
  *
  * Without arguments it compiles and runs the entry of the current executable project. Inside a
  * workspace it runs the single executable project, or the one selected with the global `--filter`
@@ -38,8 +38,8 @@ export interface RunOptions {
  */
 export function runCommand(): Command {
   const command = new Command('run')
-    .description('Compile a Livescript file, or the current project, and run it')
-    .argument('[file]', 'Livescript source file')
+    .description('Compile a Shift file, or the current project, and run it')
+    .argument('[file]', 'Shift source file')
     .option('-g, --global <name...>', 'Names available in the global scope without being declared')
     .option('--path <directory>', 'Run the command as if started in the given directory')
     .action((file: string | undefined) => {

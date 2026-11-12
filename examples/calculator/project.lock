@@ -4,7 +4,7 @@
     "@calculator/mathlib@1.0.0": {
       "name": "@calculator/mathlib",
       "version": "1.0.0",
-      "integrity": "6c5c4a8e0b0dc5d801ae541f5290daf22566a3b3a58fc98d66ae16fa88922e51",
+      "integrity": "a75c3bed3f66de81a2daae94aca1fdb2ce2120748ca23fb1fbf430166c56548c",
       "source": "local",
       "dependencies": {}
     }

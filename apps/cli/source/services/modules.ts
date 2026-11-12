@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path'
 
 import * as ts from 'typescript'
 
-import { CompilerError, DiagnosticBag, Parser } from '@livescript/compiler'
+import { CompilerError, DiagnosticBag, Parser } from '@shift/compiler'
 
 /** A name bound by an import declaration. */
 export interface ImportedName {
@@ -77,7 +77,7 @@ export function resolveModulePath(
   if (specifier.startsWith('./') || specifier.startsWith('../')) {
     const directory = dirname(fromFile)
 
-    return resolve(directory, `${specifier}.ls`)
+    return resolve(directory, `${specifier}.shift`)
   }
 
   let bestName: string | undefined
@@ -117,13 +117,13 @@ export function resolveModulePath(
       'unknown-import',
       `Package '${bestName}' has no project.json in the store.`,
       node,
-      'Add the package to the store with `livescript package add-local`.',
+      'Add the package to the store with `shift package add-local`.',
     )
   }
 
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { entry?: string }
 
-  return join(base, manifest.entry ?? 'src/index.ls')
+  return join(base, manifest.entry ?? 'src/index.shift')
 }
 
 /**

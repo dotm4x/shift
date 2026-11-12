@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 
-import { CompilerError, type Diagnostic, type DiagnosticBag } from '@livescript/compiler'
+import { CompilerError, type Diagnostic, type DiagnosticBag } from '@shift/compiler'
 
 /** ANSI color codes used by the renderer. */
 const colors = {

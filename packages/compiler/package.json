@@ -1,8 +1,8 @@
 {
-  "name": "@livescript/compiler",
+  "name": "@shift/compiler",
   "version": "0.1.0",
   "private": true,
-  "description": "Livescript compiler.",
+  "description": "Shift compiler.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

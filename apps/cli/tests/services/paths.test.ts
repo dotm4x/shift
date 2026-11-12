@@ -4,7 +4,7 @@ import { resolveInvocationPath } from '../../source/services/paths.js'
 
 describe('resolveInvocationPath', () => {
   it('keeps absolute paths as-is', () => {
-    expect(resolveInvocationPath('/tmp/sample.ls')).toBe('/tmp/sample.ls')
+    expect(resolveInvocationPath('/tmp/sample.shift')).toBe('/tmp/sample.shift')
   })
 
   it('resolves relative paths against INIT_CWD', () => {
@@ -12,7 +12,7 @@ describe('resolveInvocationPath', () => {
     process.env.INIT_CWD = '/tmp'
 
     try {
-      expect(resolveInvocationPath('sample.ls')).toBe('/tmp/sample.ls')
+      expect(resolveInvocationPath('sample.shift')).toBe('/tmp/sample.shift')
     } finally {
       if (previous === undefined) {
         delete process.env.INIT_CWD
@@ -27,7 +27,7 @@ describe('resolveInvocationPath', () => {
     delete process.env.INIT_CWD
 
     try {
-      expect(resolveInvocationPath('sample.ls')).toBe(`${process.cwd()}/sample.ls`)
+      expect(resolveInvocationPath('sample.shift')).toBe(`${process.cwd()}/sample.shift`)
     } finally {
       if (previous !== undefined) {
         process.env.INIT_CWD = previous

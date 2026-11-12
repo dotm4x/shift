@@ -15,7 +15,7 @@ export interface LexerOptions {
 }
 
 /**
- * Turns Livescript source text into tokens using the TypeScript scanner.
+ * Turns Shift source text into tokens using the TypeScript scanner.
  */
 export class Lexer {
   private readonly _languageVersion: ts.ScriptTarget
@@ -33,7 +33,7 @@ export class Lexer {
   /**
    * Scans the given source text up to the end of the file.
    *
-   * @param source Livescript source text.
+   * @param source Shift source text.
    * @param diagnostics Bag that collects scan errors, such as unterminated literals.
    * @returns Tokens in source order, excluding the end-of-file token.
    */

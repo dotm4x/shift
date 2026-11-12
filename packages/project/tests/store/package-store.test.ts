@@ -9,7 +9,7 @@ import { PackageStore } from '../../source/store/package-store.js'
 let directories: string[] = []
 
 function createTemporaryDirectory(): string {
-  const directory = mkdtempSync(join(tmpdir(), 'livescript-store-'))
+  const directory = mkdtempSync(join(tmpdir(), 'shift-store-'))
   directories.push(directory)
 
   return directory
@@ -27,7 +27,7 @@ function createLocalPackage(root: string, name: string, version: string, content
   const directory = join(root, name.replace(/[^a-zA-Z0-9]/g, '-'))
   mkdirSync(directory, { recursive: true })
   writeFileSync(join(directory, 'project.json'), JSON.stringify({ name, version, type: 'library' }))
-  writeFileSync(join(directory, 'index.ls'), content)
+  writeFileSync(join(directory, 'index.shift'), content)
 
   return directory
 }

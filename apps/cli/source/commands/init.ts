@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { Command } from 'commander'
 
-import { type ProjectManifest, serializeProjectManifest } from '@livescript/project'
+import { type ProjectManifest, serializeProjectManifest } from '@shift/project'
 
 import { resolveInvocationPath } from '../services/paths.js'
 
@@ -14,13 +14,13 @@ export interface InitOptions {
 }
 
 /**
- * Creates the command that initializes a new LiveScript project.
+ * Creates the command that initializes a new Shift project.
  *
  * @returns The init command.
  */
 export function initCommand(): Command {
   return new Command('init')
-    .description('Initialize a new LiveScript project')
+    .description('Initialize a new Shift project')
     .argument('[directory]', 'Project directory', '.')
     .option('-n, --name <name>', 'Project name')
     .option('-t, --type <type>', 'Project type (executable or library)', 'executable')
@@ -36,13 +36,13 @@ export function initCommand(): Command {
           name,
           version: '0.1.0',
           type,
-          entry: type === 'executable' ? 'src/main.ls' : 'src/index.ls',
+          entry: type === 'executable' ? 'src/main.shift' : 'src/index.shift',
         }
 
         writeFileSync(join(root, 'project.json'), serializeProjectManifest(manifest))
         mkdirSync(join(root, 'src'), { recursive: true })
 
-        console.log(`Initialized LiveScript project '${name}' in ${root}`)
+        console.log(`Initialized Shift project '${name}' in ${root}`)
       } catch (error) {
         console.error(error instanceof Error ? error.message : error)
         process.exitCode = 1

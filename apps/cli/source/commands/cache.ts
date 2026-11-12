@@ -1,6 +1,6 @@
 import { Command } from 'commander'
 
-import { PackageStore } from '@livescript/project'
+import { PackageStore } from '@shift/project'
 
 /**
  * Creates the command that manages the global package cache.

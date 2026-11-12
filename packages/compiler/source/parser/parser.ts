@@ -5,7 +5,7 @@ import { type Diagnostic, toDiagnosticSeverity } from '../shared/diagnostics/dia
 
 /** Options that configure a parser. */
 export interface ParserOptions {
-  /** File name attached to the syntax tree. Defaults to `source.ls`. */
+  /** File name attached to the syntax tree. Defaults to `source.shift`. */
   readonly fileName?: string
   /** Language version used to parse the source. Defaults to `ScriptTarget.Latest`. */
   readonly languageVersion?: ts.ScriptTarget
@@ -13,7 +13,7 @@ export interface ParserOptions {
   readonly scriptKind?: ts.ScriptKind
 }
 
-const defaultFileName = 'source.ls'
+const defaultFileName = 'source.shift'
 
 /**
  * Source files expose their parse diagnostics at runtime, but TypeScript does not declare them
@@ -24,7 +24,7 @@ interface ParsedSourceFile extends ts.SourceFile {
 }
 
 /**
- * Parses Livescript source text into a TypeScript syntax tree.
+ * Parses Shift source text into a TypeScript syntax tree.
  */
 export class Parser {
   private readonly _fileName: string
@@ -32,7 +32,7 @@ export class Parser {
   private readonly _scriptKind: ts.ScriptKind
 
   /**
-   * @param options Parser options. The defaults use the `source.ls` file name and the latest
+   * @param options Parser options. The defaults use the `source.shift` file name and the latest
    * language version.
    */
   public constructor(options: ParserOptions = {}) {
@@ -44,7 +44,7 @@ export class Parser {
   /**
    * Builds a source file with parent nodes linked so the tree can be traversed directly.
    *
-   * @param source Livescript source text.
+   * @param source Shift source text.
    * @param diagnostics Bag that collects syntax errors found while parsing.
    * @returns Parsed source file.
    */

@@ -25,10 +25,10 @@ describe('compile', () => {
 
 describe('compileFile', () => {
   it('compiles a file from disk', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'livescript-'))
+    const directory = mkdtempSync(join(tmpdir(), 'shift-'))
 
     try {
-      const file = join(directory, 'sample.ls')
+      const file = join(directory, 'sample.shift')
       writeFileSync(file, 'let a = 1')
       const { diagnostics, ir } = compileFile(file)
 
@@ -48,20 +48,20 @@ describe('compileModuleGraph', () => {
       join(packageRoot, 'project.json'),
       '{"name":"mathlib","version":"1.0.0","type":"library"}',
     )
-    writeFileSync(join(packageRoot, 'src', 'index.ls'), source)
+    writeFileSync(join(packageRoot, 'src', 'index.shift'), source)
 
     return new Map([['mathlib', packageRoot]])
   }
 
   it('compiles an importer against the exported functions of its dependency', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'livescript-modules-'))
+    const directory = mkdtempSync(join(tmpdir(), 'shift-modules-'))
 
     try {
       const packages = createPackage(
         directory,
         'export function double(value: i32): i32 {\n  return value * 2\n}',
       )
-      const entry = join(directory, 'main.ls')
+      const entry = join(directory, 'main.shift')
       writeFileSync(entry, 'import { double } from "mathlib"\n\nprint(double(2))')
 
       const modules = compileModuleGraph(collectModuleGraph(entry, packages), packages)
@@ -74,14 +74,14 @@ describe('compileModuleGraph', () => {
   })
 
   it('rejects imports of names the dependency does not export', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'livescript-modules-'))
+    const directory = mkdtempSync(join(tmpdir(), 'shift-modules-'))
 
     try {
       const packages = createPackage(
         directory,
         'export function double(value: i32): i32 {\n  return value * 2\n}',
       )
-      const entry = join(directory, 'main.ls')
+      const entry = join(directory, 'main.shift')
       writeFileSync(entry, 'import { missing } from "mathlib"\n\nprint(missing(2))')
 
       expect(() => compileModuleGraph(collectModuleGraph(entry, packages), packages)).toThrow(

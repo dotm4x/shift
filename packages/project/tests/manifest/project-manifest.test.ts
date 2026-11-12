@@ -22,7 +22,7 @@ describe('parseProjectManifest', () => {
         version: '2.1.0',
         description: 'Graphics',
         type: 'executable',
-        entry: 'src/main.ls',
+        entry: 'src/main.shift',
         sdk: '0.1.0',
         dependencies: { http: '^1.0.0' },
         developmentDependencies: { testing: '~2.0.0' },
@@ -75,10 +75,10 @@ describe('parseProjectManifest', () => {
 
   it('parses scripts', () => {
     const manifest = parseProjectManifest(
-      '{"name":"a","version":"1.0.0","scripts":{"start":"run src/main.ls"}}',
+      '{"name":"a","version":"1.0.0","scripts":{"start":"run src/main.shift"}}',
     )
 
-    expect(manifest.scripts?.start).toBe('run src/main.ls')
+    expect(manifest.scripts?.start).toBe('run src/main.shift')
   })
 
   it('rejects empty script commands', () => {

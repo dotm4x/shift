@@ -50,7 +50,7 @@ describe('createEmptyLockfile', () => {
 
 describe('writeLockfile', () => {
   it('writes packages sorted by key', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'livescript-lock-'))
+    const directory = mkdtempSync(join(tmpdir(), 'shift-lock-'))
     const path = join(directory, 'project.lock')
 
     try {

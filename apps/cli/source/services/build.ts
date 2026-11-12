@@ -5,7 +5,7 @@ import {
   type ProjectManifest,
   readWorkspaceManifest,
   topologicalOrder,
-} from '@livescript/project'
+} from '@shift/project'
 
 import { buildModules, requireClang } from './clang.js'
 import { compileProject } from './compiler.js'

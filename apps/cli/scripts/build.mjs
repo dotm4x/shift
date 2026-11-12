@@ -3,8 +3,8 @@ import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// Forwards arguments to the livescript build command, and compiles the CLI itself when called
-// without them, so `pnpm --filter @livescript/cli build <file>` compiles a Livescript file.
+// Forwards arguments to the shift build command, and compiles the CLI itself when called
+// without them, so `pnpm --filter @shift/cli build <file>` compiles a Shift file.
 const args = process.argv.slice(2)
 const directory = dirname(dirname(fileURLToPath(import.meta.url)))
 const cli = join(directory, 'dist', 'main.js')

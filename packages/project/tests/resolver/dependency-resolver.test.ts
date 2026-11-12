@@ -14,7 +14,7 @@ import { PackageStore } from '../../source/store/package-store.js'
 let directories: string[] = []
 
 function createTemporaryDirectory(): string {
-  const directory = mkdtempSync(join(tmpdir(), 'livescript-resolver-'))
+  const directory = mkdtempSync(join(tmpdir(), 'shift-resolver-'))
   directories.push(directory)
 
   return directory

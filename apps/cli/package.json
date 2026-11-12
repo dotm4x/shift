@@ -1,24 +1,24 @@
 {
-  "name": "@livescript/cli",
+  "name": "@shift/cli",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "livescript": "./dist/main.js"
+    "shift": "./dist/main.js"
   },
   "files": [
     "dist"
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
-    "compile": "pnpm --filter @livescript/compiler build && tsc -p tsconfig.build.json",
+    "compile": "pnpm --filter @shift/compiler build && tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@livescript/compiler": "workspace:*",
-    "@livescript/project": "workspace:*",
+    "@shift/compiler": "workspace:*",
+    "@shift/project": "workspace:*",
     "commander": "^15.0.0",
     "typescript": "^6.0.3"
   },

@@ -18,7 +18,7 @@ import {
 let directories: string[] = []
 
 function createTemporaryDirectory(): string {
-  const directory = mkdtempSync(join(tmpdir(), 'livescript-workspace-'))
+  const directory = mkdtempSync(join(tmpdir(), 'shift-workspace-'))
   directories.push(directory)
 
   return directory

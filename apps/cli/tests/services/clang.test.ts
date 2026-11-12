@@ -29,7 +29,7 @@ describe('requireClang', () => {
 
 describe.skipIf(!clangAvailable)('buildExecutable', () => {
   it('produces a runnable executable', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'livescript-'))
+    const directory = mkdtempSync(join(tmpdir(), 'shift-'))
 
     try {
       const executable = join(directory, 'program')
@@ -43,7 +43,7 @@ describe.skipIf(!clangAvailable)('buildExecutable', () => {
   })
 
   it('reports clang failures', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'livescript-'))
+    const directory = mkdtempSync(join(tmpdir(), 'shift-'))
 
     try {
       expect(buildExecutable('this is not llvm ir', join(directory, 'program'))).not.toBe(0)

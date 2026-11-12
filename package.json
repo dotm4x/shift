@@ -1,5 +1,5 @@
 {
-  "name": "livescript",
+  "name": "shift",
   "private": true,
   "description": "An experimental programming language.",
   "packageManager": "pnpm@12.18.0",
@@ -13,7 +13,7 @@
     "format:files": "prettier --write",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
-    "livescript": "node apps/cli/dist/main.js",
+    "shift": "node apps/cli/dist/main.js",
     "prepare": "husky"
   },
   "lint-staged": {

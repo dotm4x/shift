@@ -7,7 +7,7 @@ import {
   parseProjectManifest,
   type ProjectManifest,
   serializeProjectManifest,
-} from '@livescript/project'
+} from '@shift/project'
 
 import { resolveInvocationPath } from './paths.js'
 
@@ -76,7 +76,7 @@ export function resolveInstalledPackages(manifest: ProjectManifest): ReadonlyMap
  * @returns The entry path, defaulting by project type.
  */
 export function entryOf(manifest: ProjectManifest): string {
-  return manifest.entry ?? (manifest.type === 'executable' ? 'src/main.ls' : 'src/index.ls')
+  return manifest.entry ?? (manifest.type === 'executable' ? 'src/main.shift' : 'src/index.shift')
 }
 
 /**

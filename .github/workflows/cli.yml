@@ -48,14 +48,14 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm --filter @livescript/cli... build
+        run: pnpm --filter @shift/cli... build
 
       - name: Test
-        run: pnpm --filter @livescript/cli test
+        run: pnpm --filter @shift/cli test
 
       - name: Smoke test
         run: |
-          printf 'print("ci")\nprint(41 + 1)\n' > sample.ls
-          node apps/cli/dist/main.js build sample.ls -o sample
+          printf 'print("ci")\nprint(41 + 1)\n' > sample.shift
+          node apps/cli/dist/main.js build sample.shift -o sample
           ./sample
-          node apps/cli/dist/main.js run sample.ls
+          node apps/cli/dist/main.js run sample.shift

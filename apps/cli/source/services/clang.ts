@@ -25,7 +25,7 @@ export function requireClang(): void {
  * @returns The exit status of clang.
  */
 export function buildExecutable(ir: string, outputPath: string): number {
-  const directory = mkdtempSync(join(tmpdir(), 'livescript-'))
+  const directory = mkdtempSync(join(tmpdir(), 'shift-'))
 
   try {
     const irPath = join(directory, 'output.ll')
@@ -52,7 +52,7 @@ export function buildModules(
   modules: readonly { readonly path: string; readonly ir: string }[],
   outputPath: string,
 ): number {
-  const directory = mkdtempSync(join(tmpdir(), 'livescript-'))
+  const directory = mkdtempSync(join(tmpdir(), 'shift-'))
 
   try {
     mkdirSync(dirname(outputPath), { recursive: true })
@@ -97,7 +97,7 @@ export function buildModules(
 export function buildAndRunModules(
   modules: readonly { readonly path: string; readonly ir: string }[],
 ): number {
-  const directory = mkdtempSync(join(tmpdir(), 'livescript-'))
+  const directory = mkdtempSync(join(tmpdir(), 'shift-'))
 
   try {
     const executable = join(directory, 'program')
@@ -122,7 +122,7 @@ export function buildAndRunModules(
  * @returns The exit status of the executable, or of clang when the build fails.
  */
 export function buildAndRun(ir: string): number {
-  const directory = mkdtempSync(join(tmpdir(), 'livescript-'))
+  const directory = mkdtempSync(join(tmpdir(), 'shift-'))
 
   try {
     const executable = join(directory, 'program')

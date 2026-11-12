@@ -11,13 +11,13 @@ import {
   Linter,
   ModuleResolver,
   Parser,
-} from '@livescript/compiler'
+} from '@shift/compiler'
 
 import { renderDiagnostic } from './diagnostics.js'
 import { collectModuleGraph, type ModuleNode, resolveModulePath } from './modules.js'
 import { resolveInvocationPath } from './paths.js'
 
-/** Result of running the compiler pipeline over Livescript source text. */
+/** Result of running the compiler pipeline over Shift source text. */
 export interface CompileResult {
   readonly diagnostics: DiagnosticBag
   readonly ir: string
@@ -35,7 +35,7 @@ export interface CompiledModule {
 
 /** Options of the compiler pipeline. */
 export interface CompileOptions {
-  /** Name of the source file, used to report diagnostics. Defaults to `source.ls`. */
+  /** Name of the source file, used to report diagnostics. Defaults to `source.shift`. */
   readonly fileName?: string | undefined
   /** Names available in the global scope without being declared. */
   readonly globals?: readonly string[] | undefined
@@ -48,9 +48,9 @@ export interface CompileOptions {
 }
 
 /**
- * Runs the compiler pipeline over Livescript source text.
+ * Runs the compiler pipeline over Shift source text.
  *
- * @param source Livescript source text.
+ * @param source Shift source text.
  * @param options Pipeline options.
  * @returns Diagnostics of the pipeline, the generated LLVM IR, which is empty when the
  * pipeline reports errors, and the module resolver configured with the given packages.
@@ -101,9 +101,9 @@ export function compile(source: string, options: CompileOptions = {}): CompileRe
 }
 
 /**
- * Reads a Livescript file and runs the compiler pipeline over it.
+ * Reads a Shift file and runs the compiler pipeline over it.
  *
- * @param file Path of the Livescript source file.
+ * @param file Path of the Shift source file.
  * @param options Pipeline options.
  * @returns Diagnostics of the pipeline and the generated LLVM IR.
  */

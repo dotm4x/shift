@@ -1,6 +1,6 @@
 import { Command } from 'commander'
 
-import { loadWorkspaceProjects } from '@livescript/project'
+import { loadWorkspaceProjects } from '@shift/project'
 
 /**
  * Creates the command that manages workspaces.

@@ -215,10 +215,10 @@ function getDefaultStoreRoot(): string {
   if (platform() === 'win32') {
     const localAppData = process.env.LOCALAPPDATA
 
-    return join(localAppData ?? join(homedir(), 'AppData', 'Local'), 'LiveScript')
+    return join(localAppData ?? join(homedir(), 'AppData', 'Local'), 'Shift')
   }
 
-  return join(homedir(), '.livescript')
+  return join(homedir(), '.shift')
 }
 
 function computeDirectoryHash(directory: string): string {

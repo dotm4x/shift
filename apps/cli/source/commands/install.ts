@@ -13,7 +13,7 @@ import {
   resolveDependencies,
   topologicalOrder,
   writeLockfile,
-} from '@livescript/project'
+} from '@shift/project'
 
 import {
   findProjectRoot,
