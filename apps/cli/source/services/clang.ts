@@ -31,7 +31,7 @@ export function buildExecutable(ir: string, outputPath: string): number {
     const irPath = join(directory, 'output.ll')
     writeFileSync(irPath, ir)
 
-    const result = spawnSync('clang', [irPath, '-o', outputPath], { stdio: 'inherit' })
+    const result = spawnSync('clang', [irPath, '-o', outputPath, '-lgc'], { stdio: 'inherit' })
 
     return result.status ?? 1
   } finally {
