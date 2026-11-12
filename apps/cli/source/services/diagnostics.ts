@@ -121,7 +121,10 @@ export function reportDiagnostics(fileName: string, diagnostics: DiagnosticBag):
  */
 export function reportError(file: string, error: unknown): void {
   if (error instanceof CompilerError) {
-    console.error(renderDiagnostic(file, diagnosticOfError(error)))
+    const sourceFile = error.node?.getSourceFile()
+    const path = sourceFile === undefined ? file : sourceFile.fileName
+
+    console.error(renderDiagnostic(path, diagnosticOfError(error)))
 
     return
   }
