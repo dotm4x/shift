@@ -5,6 +5,7 @@ on:
     paths:
       - 'apps/cli/**'
       - 'packages/compiler/**'
+      - 'packages/project/**'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - '.github/workflows/cli.yml'
@@ -12,6 +13,7 @@ on:
     paths:
       - 'apps/cli/**'
       - 'packages/compiler/**'
+      - 'packages/project/**'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - '.github/workflows/cli.yml'
@@ -46,7 +48,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm --filter @livescript/cli build
+        run: pnpm --filter @livescript/cli... build
 
       - name: Test
         run: pnpm --filter @livescript/cli test
