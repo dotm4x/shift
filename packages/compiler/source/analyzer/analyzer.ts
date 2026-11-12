@@ -13,7 +13,7 @@ export interface AnalyzerOptions {
   /** Functions provided by the language. Defaults to the built-in functions. */
   readonly builtins?: readonly Builtin[]
   /** Names available in the global scope without being declared. Defaults to no globals. */
-  readonly globals?: readonly string[]
+  readonly globals?: readonly string[] | undefined
 }
 
 /**

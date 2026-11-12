@@ -9,6 +9,7 @@ import { resolveInvocationPath } from '../services/paths.js'
 
 /** Options of the build command. */
 export interface BuildOptions {
+  readonly global?: readonly string[]
   readonly output?: string
 }
 
@@ -21,10 +22,11 @@ export function buildCommand(): Command {
   return new Command('build')
     .description('Compile a Livescript file into a native executable')
     .argument('<file>', 'Livescript source file')
+    .option('-g, --global <name...>', 'Names available in the global scope without being declared')
     .option('-o, --output <path>', 'Path of the executable')
     .action((file: string, options: BuildOptions) => {
       try {
-        const { diagnostics, ir } = compileFile(file)
+        const { diagnostics, ir } = compileFile(file, { globals: options.global })
 
         if (reportDiagnostics(file, diagnostics)) {
           process.exitCode = 1

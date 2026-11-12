@@ -13,9 +13,10 @@ export function runCommand(): Command {
   return new Command('run')
     .description('Compile a Livescript file and run it')
     .argument('<file>', 'Livescript source file')
-    .action((file: string) => {
+    .option('-g, --global <name...>', 'Names available in the global scope without being declared')
+    .action((file: string, options: { global?: readonly string[] }) => {
       try {
-        const { diagnostics, ir } = compileFile(file)
+        const { diagnostics, ir } = compileFile(file, { globals: options.global })
 
         if (reportDiagnostics(file, diagnostics)) {
           process.exitCode = 1

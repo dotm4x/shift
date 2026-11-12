@@ -1,7 +1,7 @@
 class Car {
-    public year: i8
+    public year: i32
 
-    public constructor(year: i8) {
+    public constructor(year: i32) {
         this.year = year
     }
 }

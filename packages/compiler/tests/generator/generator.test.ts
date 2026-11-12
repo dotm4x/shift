@@ -376,6 +376,42 @@ describe('Generator', () => {
     expect(generate('let a = 1', 'start')).toContain('define i32 @start() {')
   })
 
+  it('generates object literals with member access and calls', () => {
+    const source = ['const point = { x: 1, y: 2 }', 'let sum = point.x + point.y'].join('\n')
+
+    const ir = generate(source)
+
+    expect(ir).toContain('call ptr @GC_malloc(i64 16)')
+    expect(ir).toContain('store i64 2, ptr %t0')
+    expect(ir).toContain('add i32')
+  })
+
+  it('generates calls through object properties', () => {
+    const source = [
+      'function double(value: i32): i32 {',
+      '  return value * 2',
+      '}',
+      '',
+      'const ops = { twice: double }',
+      'let result = ops.twice(21)',
+    ].join('\n')
+
+    const ir = generate(source)
+
+    expect(ir).toContain('call ptr @GC_malloc(i64 16)')
+    expect(ir).toContain('call i32 %t')
+  })
+
+  it('generates external namespace calls', () => {
+    const source = 'let value = Serial.encode(1)'
+
+    const ir = new Generator().generate(new Parser().parse(source, new DiagnosticBag()), {
+      globals: ['Serial'],
+    })
+
+    expect(ir).toContain('call i32 @Serial.encode(i32 1)')
+  })
+
   it('rejects unknown variables', () => {
     expect(() => generate('x = 1')).toThrow("Unknown variable 'x'.")
   })

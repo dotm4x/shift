@@ -13,6 +13,7 @@ import {
   u8Type,
   u16Type,
   u32Type,
+  unknownType,
   usizeType,
   voidType,
 } from '../analyzer/types/type.js'
@@ -50,6 +51,8 @@ export interface GeneratorOptions {
   readonly builtins?: readonly Builtin[]
   /** Name of the entry function that runs the top-level statements. Defaults to `main`. */
   readonly entryName?: string
+  /** Names available in the global scope without being declared. Defaults to no globals. */
+  readonly globals?: readonly string[] | undefined
 }
 
 /** Result of generating an expression. */
@@ -61,7 +64,7 @@ interface ExpressionResult {
 
 /** Stack slot of a generated variable. */
 interface VariableSlot {
-  readonly pointer: LlvmLocal
+  readonly pointer: LlvmOperand
   readonly type: Type
 }
 
@@ -118,8 +121,11 @@ interface GenerationContext {
   readonly entryName: string
   finallyContexts: FinallyContext[]
   readonly functions: Map<string, FunctionSignature>
+  readonly globals: ReadonlySet<string>
   handlerDepth: number
   readonly labels: Map<string, LoopContext>
+  readonly objectLiterals: Map<LlvmOperand, ts.ObjectLiteralExpression>
+  readonly objectDeclarations: Map<string, ts.ObjectLiteralExpression>
   loops: LoopContext[]
   readonly module: LlvmModule
   panicEmitted: boolean
@@ -154,8 +160,11 @@ export class Generator {
       entryName: options.entryName ?? 'main',
       finallyContexts: [],
       functions: new Map<string, FunctionSignature>(),
+      globals: new Set<string>(options.globals ?? []),
       handlerDepth: 0,
       labels: new Map<string, LoopContext>(),
+      objectLiterals: new Map<LlvmOperand, ts.ObjectLiteralExpression>(),
+      objectDeclarations: new Map<string, ts.ObjectLiteralExpression>(),
       loops: [],
       module: new LlvmModule(),
       panicEmitted: false,
@@ -700,6 +709,13 @@ export class Generator {
 
     builder.store(irTypeFromType(type), value, pointer)
     this.declareVariable(name, pointer, type, context)
+
+    if (
+      declaration.initializer !== undefined &&
+      ts.isObjectLiteralExpression(declaration.initializer)
+    ) {
+      context.objectDeclarations.set(name, declaration.initializer)
+    }
   }
 
   /**
@@ -1461,6 +1477,10 @@ export class Generator {
       return this.generateArrayLiteral(node, builder, context)
     }
 
+    if (ts.isObjectLiteralExpression(node)) {
+      return this.generateObjectLiteral(node, builder, context)
+    }
+
     if (ts.isNewExpression(node)) {
       return this.generateNew(node, builder, context)
     }
@@ -1814,7 +1834,7 @@ export class Generator {
     node: ts.Expression,
     builder: LlvmFunction,
     context: GenerationContext,
-  ): { pointer: LlvmLocal; type: Type } {
+  ): { pointer: LlvmOperand; type: Type } {
     if (ts.isIdentifier(node)) {
       const slot = this.lookupVariable(node, node.text, context)
 
@@ -2141,7 +2161,7 @@ export class Generator {
     node: ts.PropertyAccessExpression,
     builder: LlvmFunction,
     context: GenerationContext,
-  ): { pointer: LlvmLocal; type: Type } {
+  ): { pointer: LlvmOperand; type: Type } {
     const memberName = memberNameOf(node.name)
 
     if (node.expression.kind === ts.SyntaxKind.SuperKeyword) {
@@ -2156,6 +2176,52 @@ export class Generator {
       }
 
       return { pointer: this.lengthAddress(target.operand, builder), type: usizeType }
+    }
+
+    if (target.type.kind === 'unknown') {
+      const qualifiedName = ts.isIdentifier(node.expression)
+        ? `${node.expression.text}.${memberName}`
+        : memberName
+
+      context.module.addDeclaration(`@${qualifiedName} = external global ptr`)
+
+      return { pointer: { kind: 'global', name: qualifiedName }, type: unknownType }
+    }
+
+    if (isNumericType(target.type) || isBooleanType(target.type)) {
+      const qualifiedName = ts.isIdentifier(node.expression)
+        ? `${node.expression.text}.${memberName}`
+        : memberName
+
+      context.module.addDeclaration(`@${qualifiedName} = external global i32`)
+
+      return { pointer: { kind: 'global', name: qualifiedName }, type: unknownType }
+    }
+
+    if (target.type.kind === 'object') {
+      const properties = target.type.properties
+      const index = properties.findIndex((property) => property.name === memberName)
+
+      if (index === -1) {
+        throw new CompilerError('unknown-name', `The object has no property '${memberName}'.`, node)
+      }
+
+      const property = properties[index]
+
+      if (property === undefined) {
+        throw new CompilerError('unknown-name', `The object has no property '${memberName}'.`, node)
+      }
+
+      const offset =
+        8 +
+        properties.slice(0, index).reduce((total, candidate) => total + sizeOf(candidate.type), 0)
+      const pointer = builder.bytePointer(target.operand, {
+        kind: 'constant',
+        type: 'i64',
+        text: String(offset),
+      })
+
+      return { pointer, type: property.type }
     }
 
     if (isReferenceType(target.type)) {
@@ -2257,6 +2323,14 @@ export class Generator {
 
     if (isStringType(target.type)) {
       throw new CompilerError('invalid-operation', 'Strings have no methods yet.', node)
+    }
+
+    if (target.type.kind === 'unknown') {
+      return this.generateExternalCall(node, access, builder, context)
+    }
+
+    if (target.type.kind === 'object') {
+      return this.generateObjectMethodCall(node, target, builder, context)
     }
 
     if (!isReferenceType(target.type)) {
@@ -2394,6 +2468,251 @@ export class Generator {
       literalValue: undefined,
       operand: { kind: 'constant', type: 'void', text: 'void' },
       type: voidType,
+    }
+  }
+
+  /**
+   * Generates a call to an external function through a global namespace.
+   */
+  private generateExternalCall(
+    node: ts.CallExpression,
+    access: ts.PropertyAccessExpression,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): ExpressionResult {
+    const namespace = access.expression
+
+    if (!ts.isIdentifier(namespace)) {
+      throw new CompilerError('unsupported', 'External calls require a simple namespace.', node)
+    }
+
+    const name = `${namespace.text}.${memberNameOf(access.name)}`
+    const signature = context.functions.get(name)
+    const builtin = context.builtins.get(name)
+
+    if (builtin !== undefined) {
+      return this.generateBuiltinCall(builtin, node, builder, context)
+    }
+
+    if (signature !== undefined) {
+      if (node.arguments.length !== signature.parameterTypes.length) {
+        throw new CompilerError(
+          'type-mismatch',
+          `Function '${name}' expects ${String(signature.parameterTypes.length)} arguments.`,
+          node,
+        )
+      }
+
+      const args = this.generateCallArguments(node, signature.parameterTypes, builder, context)
+      const returned = builder.call(irTypeFromType(signature.returnType), name, args)
+
+      return {
+        literalValue: undefined,
+        operand: returned ?? { kind: 'constant', type: 'void', text: 'void' },
+        type: signature.returnType,
+      }
+    }
+
+    // Undeclared namespace functions are treated as external symbols with pointer arguments.
+    context.module.addDeclaration(`declare i32 @${name}(...)`)
+    const args: CallArgument[] = []
+
+    for (const argument of node.arguments) {
+      const result = this.generateExpression(argument, builder, context)
+
+      args.push({ type: irTypeFromType(result.type), value: result.operand })
+    }
+
+    const returned = builder.call('i32', name, args)
+
+    return {
+      literalValue: undefined,
+      operand: returned ?? { kind: 'constant', type: 'void', text: 'void' },
+      type: i32Type,
+    }
+  }
+
+  /**
+   * Returns the function type of the initializer of an object property, when it names a function.
+   */
+  private findFunctionInitializer(
+    _node: ts.Node,
+    target: ExpressionResult,
+    memberName: string,
+    context: GenerationContext,
+    variableName: string | undefined,
+  ): Type | undefined {
+    if (target.type.kind !== 'object') {
+      return undefined
+    }
+
+    const declaration = this.findObjectDeclaration(target, context, variableName)
+
+    if (declaration === undefined) {
+      return undefined
+    }
+
+    for (const property of declaration.properties) {
+      if (!ts.isPropertyAssignment(property)) {
+        continue
+      }
+
+      if (memberNameOf(property.name) !== memberName) {
+        continue
+      }
+
+      if (!ts.isIdentifier(property.initializer)) {
+        return undefined
+      }
+
+      const signature = context.functions.get(property.initializer.text)
+
+      if (signature === undefined) {
+        return undefined
+      }
+
+      return {
+        kind: 'function',
+        parameters: signature.parameterTypes.map((parameterType, index) => ({
+          name: `p${String(index)}`,
+          type: parameterType,
+          optional: false,
+        })),
+        returnType: signature.returnType,
+      }
+    }
+
+    return undefined
+  }
+
+  /**
+   * Finds the object literal declaration that produced a value, when it is a direct variable.
+   */
+  private findObjectDeclaration(
+    target: ExpressionResult,
+    context: GenerationContext,
+    variableName: string | undefined,
+  ): ts.ObjectLiteralExpression | undefined {
+    const direct = context.objectLiterals.get(target.operand)
+
+    if (direct !== undefined) {
+      return direct
+    }
+
+    if (variableName !== undefined) {
+      return context.objectDeclarations.get(variableName)
+    }
+
+    return undefined
+  }
+
+  /**
+   * Generates a call to a function stored in an object property.
+   */
+  private generateObjectMethodCall(
+    node: ts.CallExpression,
+    target: ExpressionResult,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): ExpressionResult {
+    const access = node.expression
+
+    if (!ts.isPropertyAccessExpression(access)) {
+      throw new CompilerError('unsupported', 'Method calls require a member access.', node)
+    }
+
+    const memberName = memberNameOf(access.name)
+    const objectType = target.type
+
+    if (objectType.kind !== 'object') {
+      throw new CompilerError('unsupported', 'Only object values support property calls.', node)
+    }
+
+    const properties = objectType.properties
+    const index = properties.findIndex((property) => property.name === memberName)
+
+    if (index === -1) {
+      throw new CompilerError('unknown-name', `The object has no property '${memberName}'.`, node)
+    }
+
+    const property = properties[index]
+
+    if (property === undefined) {
+      throw new CompilerError('unknown-name', `The object has no property '${memberName}'.`, node)
+    }
+
+    let functionType = property.type
+
+    if (functionType.kind !== 'function') {
+      const initializer = this.findFunctionInitializer(
+        node,
+        target,
+        memberName,
+        context,
+        ts.isIdentifier(access.expression) ? access.expression.text : undefined,
+      )
+
+      if (initializer === undefined) {
+        throw new CompilerError(
+          'type-mismatch',
+          `Property '${memberName}' is not a function.`,
+          node,
+        )
+      }
+
+      functionType = initializer
+    }
+
+    if (functionType.kind !== 'function') {
+      throw new CompilerError('type-mismatch', `Property '${memberName}' is not a function.`, node)
+    }
+
+    const offset =
+      8 + properties.slice(0, index).reduce((total, candidate) => total + sizeOf(candidate.type), 0)
+    const propertyPointer = builder.bytePointer(target.operand, {
+      kind: 'constant',
+      type: 'i64',
+      text: String(offset),
+    })
+    const functionPointer = builder.load('ptr', propertyPointer)
+
+    if (node.arguments.length !== functionType.parameters.length) {
+      throw new CompilerError(
+        'type-mismatch',
+        `Function '${memberName}' expects ${String(functionType.parameters.length)} arguments.`,
+        node,
+      )
+    }
+
+    const args: CallArgument[] = []
+
+    node.arguments.forEach((argumentNode, argumentIndex) => {
+      const parameter = functionType.parameters[argumentIndex]
+
+      if (parameter === undefined) {
+        throw new CompilerError(
+          'type-mismatch',
+          `Argument ${String(argumentIndex)} of '${memberName}' has no type.`,
+          node,
+        )
+      }
+
+      const result = this.generateExpression(argumentNode, builder, context)
+      const adapted = this.adaptTo(node, result, parameter.type, builder, context)
+
+      args.push({ type: irTypeFromType(parameter.type), value: adapted.operand })
+    })
+
+    const returned = builder.callValue(
+      irTypeFromType(functionType.returnType),
+      functionPointer,
+      args,
+    )
+
+    return {
+      literalValue: undefined,
+      operand: returned ?? { kind: 'constant', type: 'void', text: 'void' },
+      type: functionType.returnType,
     }
   }
 
@@ -2572,6 +2891,188 @@ export class Generator {
       operand: pointer,
       type: { kind: 'array', elementType },
     }
+  }
+
+  /**
+   * Generates an object literal allocated by the garbage collector.
+   */
+  private generateObjectLiteral(
+    node: ts.ObjectLiteralExpression,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): ExpressionResult {
+    const properties: { name: string; result: ExpressionResult }[] = []
+
+    for (const property of node.properties) {
+      if (!ts.isPropertyAssignment(property)) {
+        throw new CompilerError(
+          'unsupported',
+          'Object literals only support plain properties.',
+          property,
+        )
+      }
+
+      const name = this.propertyKeyOf(property.name, builder, context)
+
+      if (
+        ts.isIdentifier(property.initializer) &&
+        this.lookupVariableSafe(property.initializer, property.initializer.text, context) ===
+          undefined &&
+        context.functions.has(property.initializer.text)
+      ) {
+        properties.push({
+          name,
+          result: {
+            literalValue: undefined,
+            operand: { kind: 'constant', type: 'ptr', text: 'null' },
+            type: unknownType,
+          },
+        })
+
+        continue
+      }
+
+      const result = this.generateExpression(property.initializer, builder, context)
+
+      properties.push({ name, result })
+    }
+
+    if (properties.length === 0) {
+      throw new CompilerError('unsupported', 'Empty object literals are not supported.', node)
+    }
+
+    const first = properties[0]
+
+    if (first === undefined) {
+      throw new CompilerError('unsupported', 'Empty object literals are not supported.', node)
+    }
+
+    const valueType = first.result.type
+
+    for (const property of properties) {
+      if (!sameType(property.result.type, valueType)) {
+        throw new CompilerError(
+          'type-mismatch',
+          `Object literal properties must have the same type: '${property.name}' is ${describeType(property.result.type)}.`,
+          property.result.operand.kind === 'constant' ? node : node,
+        )
+      }
+    }
+
+    const bytes = 8 + properties.length * sizeOf(valueType)
+    const pointer = this.gcAlloc(node, bytes, builder, context)
+
+    builder.store(
+      'i64',
+      { kind: 'constant', type: 'i64', text: String(properties.length) },
+      pointer,
+    )
+
+    properties.forEach((property, index) => {
+      const propertyPointer = builder.bytePointer(pointer, {
+        kind: 'constant',
+        type: 'i64',
+        text: String(8 + index * sizeOf(valueType)),
+      })
+
+      builder.store(irTypeFromType(valueType), property.result.operand, propertyPointer)
+    })
+
+    const objectType: Type = {
+      kind: 'object',
+      properties: properties.map((property) => ({
+        name: property.name,
+        type: property.result.type,
+        optional: false,
+      })),
+    }
+
+    context.objectLiterals.set(pointer, node)
+
+    return {
+      literalValue: undefined,
+      operand: pointer,
+      type: objectType,
+    }
+  }
+
+  /**
+   * Looks up a variable without failing, returning its slot when found.
+   */
+  private lookupVariableSafe(
+    _node: ts.Node,
+    name: string,
+    context: GenerationContext,
+  ): VariableSlot | undefined {
+    for (let index = context.scopes.length - 1; index >= 0; index--) {
+      const slot = context.scopes[index]?.get(name)
+
+      if (slot !== undefined) {
+        return slot
+      }
+    }
+
+    if (context.globals.has(name)) {
+      return { pointer: { kind: 'global', name }, type: unknownType }
+    }
+
+    return undefined
+  }
+
+  /**
+   * Determines whether a name refers to a global variable.
+   */
+  private isGlobalVariable(name: string, context: GenerationContext): boolean {
+    return context.globals.has(name)
+  }
+
+  /**
+   * Reads the name of an object literal property, evaluating computed string keys.
+   */
+  private propertyKeyOf(
+    name: ts.PropertyName,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): string {
+    if (!ts.isComputedPropertyName(name)) {
+      return memberNameOf(name)
+    }
+
+    const expression = name.expression
+
+    if (ts.isPropertyAccessExpression(expression)) {
+      const memberName = memberNameOf(expression.name)
+
+      if (
+        ts.isIdentifier(expression.expression) &&
+        (context.globals.has(expression.expression.text) ||
+          this.lookupVariableSafe(expression.expression, expression.expression.text, context) !==
+            undefined)
+      ) {
+        return memberName
+      }
+
+      const target = this.generateExpression(expression.expression, builder, context)
+
+      if (target.type.kind === 'reference' && ts.isIdentifier(expression.expression)) {
+        const classInfo = this.classInfoOf(undefined, target.type.name, context)
+        const field = classInfo.allFields.find((candidate) => candidate.name === memberName)
+
+        if (field?.type.kind === 'literal' && typeof field.type.value === 'string') {
+          return field.type.value
+        }
+      }
+
+      if (target.type.kind === 'unknown') {
+        return memberName
+      }
+    }
+
+    throw new CompilerError(
+      'unsupported',
+      'Computed keys must reference a constant string property.',
+      name,
+    )
   }
 
   /**
@@ -3233,6 +3734,12 @@ export class Generator {
       if (slot !== undefined) {
         return slot
       }
+    }
+
+    if (context.globals.has(name)) {
+      context.module.addDeclaration(`@${name} = external global ptr`)
+
+      return { pointer: { kind: 'global', name }, type: unknownType }
     }
 
     throw new CompilerError('unknown-name', `Unknown variable '${name}'.`, undefined)

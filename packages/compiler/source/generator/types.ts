@@ -42,7 +42,12 @@ export function irTypeFromType(type: Type): LlvmType {
     }
   }
 
-  if (type.kind === 'array' || type.kind === 'reference') {
+  if (
+    type.kind === 'array' ||
+    type.kind === 'object' ||
+    type.kind === 'reference' ||
+    type.kind === 'unknown'
+  ) {
     return 'ptr'
   }
 
@@ -93,7 +98,12 @@ export function sizeOf(type: Type): number {
     }
   }
 
-  if (type.kind === 'array' || type.kind === 'reference') {
+  if (
+    type.kind === 'array' ||
+    type.kind === 'object' ||
+    type.kind === 'reference' ||
+    type.kind === 'unknown'
+  ) {
     return 8
   }
 

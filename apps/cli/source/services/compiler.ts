@@ -10,33 +10,41 @@ export interface CompileResult {
   readonly ir: string
 }
 
+/** Options of the compiler pipeline. */
+export interface CompileOptions {
+  /** Names available in the global scope without being declared. */
+  readonly globals?: readonly string[] | undefined
+}
+
 /**
  * Runs the compiler pipeline over Livescript source text.
  *
  * @param source Livescript source text.
+ * @param options Pipeline options.
  * @returns Diagnostics of the pipeline and the generated LLVM IR, which is empty when the
  * pipeline reports errors.
  */
-export function compile(source: string): CompileResult {
+export function compile(source: string, options: CompileOptions = {}): CompileResult {
   const diagnostics = new DiagnosticBag()
   const sourceFile = new Parser().parse(source, diagnostics)
 
   new Linter().lint(sourceFile, diagnostics)
-  new Analyzer().analyze(sourceFile, diagnostics)
+  new Analyzer({ globals: options.globals }).analyze(sourceFile, diagnostics)
 
   if (diagnostics.hasErrors) {
     return { diagnostics, ir: '' }
   }
 
-  return { diagnostics, ir: new Generator().generate(sourceFile) }
+  return { diagnostics, ir: new Generator().generate(sourceFile, { globals: options.globals }) }
 }
 
 /**
  * Reads a Livescript file and runs the compiler pipeline over it.
  *
  * @param file Path of the Livescript source file.
+ * @param options Pipeline options.
  * @returns Diagnostics of the pipeline and the generated LLVM IR.
  */
-export function compileFile(file: string): CompileResult {
-  return compile(readFileSync(resolveInvocationPath(file), 'utf8'))
+export function compileFile(file: string, options: CompileOptions = {}): CompileResult {
+  return compile(readFileSync(resolveInvocationPath(file), 'utf8'), options)
 }
