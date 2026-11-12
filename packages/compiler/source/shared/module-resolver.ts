@@ -10,6 +10,8 @@ export interface PathAlias {
 export interface ModuleResolverOptions {
   /** Path aliases used to resolve import specifiers. */
   readonly aliases?: readonly PathAlias[]
+  /** Installed packages mapped from package name to their base directory in the store. */
+  readonly packages?: ReadonlyMap<string, string>
 }
 
 /**
@@ -17,12 +19,14 @@ export interface ModuleResolverOptions {
  */
 export class ModuleResolver {
   private readonly _aliases: readonly PathAlias[]
+  private readonly _packages: ReadonlyMap<string, string>
 
   /**
    * @param options Resolver options. The defaults resolve relative specifiers only.
    */
   public constructor(options: ModuleResolverOptions = {}) {
     this._aliases = options.aliases ?? []
+    this._packages = options.packages ?? new Map()
   }
 
   /**
@@ -48,6 +52,50 @@ export class ModuleResolver {
       return `${directory}/${specifier}`
     }
 
+    // Resolve installed package names, supporting hierarchical names and subpaths.
+    const packageMatch = resolvePackageName(specifier, this._packages)
+
+    if (packageMatch !== undefined) {
+      const [packageName, subpath] = packageMatch
+      const base = this._packages.get(packageName)
+
+      if (base === undefined) {
+        throw new Error(`Unknown import specifier '${specifier}'.`)
+      }
+
+      return subpath === '' ? base : `${base}/${subpath}`
+    }
+
     throw new Error(`Unknown import specifier '${specifier}'.`)
   }
+}
+
+/**
+ * Finds the longest matching package name for a specifier.
+ *
+ * @param specifier Import specifier.
+ * @param packages Installed packages.
+ * @returns A tuple of package name and remaining subpath, or `undefined`.
+ */
+function resolvePackageName(
+  specifier: string,
+  packages: ReadonlyMap<string, string>,
+): [string, string] | undefined {
+  let bestName: string | undefined
+
+  for (const name of packages.keys()) {
+    if (specifier === name || specifier.startsWith(`${name}/`)) {
+      if (bestName === undefined || name.length > bestName.length) {
+        bestName = name
+      }
+    }
+  }
+
+  if (bestName === undefined) {
+    return undefined
+  }
+
+  const subpath = specifier === bestName ? '' : specifier.slice(bestName.length + 1)
+
+  return [bestName, subpath]
 }
