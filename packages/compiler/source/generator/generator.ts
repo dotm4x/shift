@@ -8,6 +8,7 @@ import {
   i16Type,
   i32Type,
   i64Type,
+  nullType,
   stringType,
   type Type,
   u8Type,
@@ -28,6 +29,7 @@ import {
   isBooleanType,
   isFloatType,
   isIntegerType,
+  isNullType,
   isNumericType,
   isReferenceType,
   isSignedInteger,
@@ -131,6 +133,7 @@ interface GenerationContext {
   panicEmitted: boolean
   pendingLabel: string | undefined
   returnType: Type | undefined
+  currentFunction: string | undefined
   readonly scopes: Map<string, VariableSlot>[]
   readonly sourceClasses: Map<string, ts.ClassDeclaration>
   thisPointer: LlvmOperand | undefined
@@ -138,6 +141,13 @@ interface GenerationContext {
 }
 
 const trueConstant: LlvmConstant = { kind: 'constant', type: 'i1', text: '1' }
+
+/** The type of a function value whose signature is not known statically. */
+const unknownFunctionType: Type = {
+  kind: 'function',
+  parameters: [],
+  returnType: i32Type,
+}
 
 /**
  * Generates LLVM IR from a syntax tree.
@@ -167,6 +177,7 @@ export class Generator {
       objectDeclarations: new Map<string, ts.ObjectLiteralExpression>(),
       loops: [],
       module: new LlvmModule(),
+      currentFunction: undefined,
       panicEmitted: false,
       pendingLabel: undefined,
       returnType: undefined,
@@ -347,11 +358,15 @@ export class Generator {
       name,
       parameterTypes: declaration.parameters.map((parameter) => {
         if (parameter.dotDotDotToken !== undefined) {
-          throw new CompilerError(
-            'unsupported',
-            `Rest parameters are not supported yet in function '${name}'.`,
-            parameter,
-          )
+          if (parameter.type === undefined) {
+            throw new CompilerError(
+              'missing-annotation',
+              `Rest parameter '${parameterNameOf(parameter)}' of function '${name}' requires a type annotation.`,
+              parameter,
+            )
+          }
+
+          return typeFromNode(parameter.type)
         }
 
         if (parameter.questionToken !== undefined) {
@@ -470,6 +485,7 @@ export class Generator {
 
     context.scopes.pop()
     context.returnType = undefined
+    context.currentFunction = undefined
   }
 
   /**
@@ -595,6 +611,12 @@ export class Generator {
       return
     }
 
+    if (ts.isForInStatement(node)) {
+      this.generateForIn(node, builder, context)
+
+      return
+    }
+
     if (ts.isSwitchStatement(node)) {
       this.generateSwitch(node, builder, context)
 
@@ -642,16 +664,26 @@ export class Generator {
       return
     }
 
-    if (
-      ts.isTypeAliasDeclaration(node) ||
-      ts.isInterfaceDeclaration(node) ||
-      ts.isEnumDeclaration(node)
-    ) {
+    if (ts.isThrowStatement(node)) {
+      this.generateThrow(node, builder, context)
+
+      return
+    }
+
+    if (ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) {
+      return
+    }
+
+    if (ts.isEnumDeclaration(node)) {
+      this.generateEnum(node, builder, context)
+
       return
     }
 
     if (ts.isFunctionDeclaration(node)) {
-      throw new CompilerError('unsupported', 'Nested functions are not supported yet.', node)
+      this.generateNestedFunction(node, builder, context)
+
+      return
     }
 
     if (ts.isClassDeclaration(node)) {
@@ -666,6 +698,200 @@ export class Generator {
   }
 
   /**
+   * Generates the constants of an enum declaration.
+   */
+  private generateEnum(
+    node: ts.EnumDeclaration,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): void {
+    if (!ts.isIdentifier(node.name)) {
+      throw new CompilerError('unsupported', 'Enums require a simple name.', node)
+    }
+
+    const name = node.name.text
+    let nextValue = 0
+
+    for (const member of node.members) {
+      const memberName = memberNameOf(member.name)
+      let value = nextValue
+
+      if (member.initializer !== undefined) {
+        const result = this.generateExpression(member.initializer, builder, context)
+
+        if (result.literalValue === undefined) {
+          throw new CompilerError(
+            'type-mismatch',
+            `Enum member '${name}.${memberName}' requires a constant value.`,
+            member,
+          )
+        }
+
+        value = result.literalValue
+      }
+
+      const pointer = builder.alloca('i32', `${name}.${memberName}`)
+
+      builder.store('i32', { kind: 'constant', type: 'i32', text: String(value) }, pointer)
+      this.declareVariable(`${name}.${memberName}`, pointer, i32Type, context)
+      nextValue = value + 1
+    }
+  }
+
+  /**
+   * Generates a throw statement by longjmping to the innermost handler.
+   */
+  private generateThrow(
+    node: ts.ThrowStatement,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): void {
+    const value = this.generateExpression(node.expression, builder, context)
+
+    if (!isStringType(value.type)) {
+      throw new CompilerError('type-mismatch', 'Throw requires a string.', node)
+    }
+
+    context.module.addGlobal('@livescript.thrown = global ptr zeroinitializer')
+    builder.store('ptr', value.operand, { kind: 'global', name: 'livescript.thrown' })
+
+    const count = builder.load('i64', { kind: 'global', name: 'livescript.handler_count' })
+    const hasHandler = builder.binary('i64', 'icmp ugt', count, {
+      kind: 'constant',
+      type: 'i64',
+      text: '0',
+    })
+    const throwLabel = builder.reserveLabel('throw.longjmp')
+    const panicLabel = builder.reserveLabel('throw.panic')
+
+    builder.branch(hasHandler, throwLabel, panicLabel)
+
+    builder.startBlock(throwLabel)
+    const slot = builder.load('i64', { kind: 'global', name: 'livescript.handler_count' })
+    const last = builder.binary('i64', 'sub', slot, {
+      kind: 'constant',
+      type: 'i64',
+      text: '1',
+    })
+    const table = builder.load('ptr', { kind: 'global', name: 'livescript.handlers' })
+    const bufferPointer = builder.elementPointer('ptr', table, last)
+    const buffer = builder.load('ptr', bufferPointer)
+
+    builder.store(
+      'i64',
+      builder.binary('i64', 'sub', slot, { kind: 'constant', type: 'i64', text: '1' }),
+      { kind: 'global', name: 'livescript.handler_count' },
+    )
+    builder.call('void', 'longjmp', [
+      { type: 'ptr', value: buffer },
+      { type: 'i32', value: { kind: 'constant', type: 'i32', text: '1' } },
+    ])
+    builder.unreachable()
+
+    builder.startBlock(panicLabel)
+    this.panic('unhandled exception', builder, context)
+  }
+
+  /**
+   * Generates a nested function declaration as a top-level function.
+   */
+  private generateNestedFunction(
+    node: ts.FunctionDeclaration,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): void {
+    if (node.name === undefined || !ts.isIdentifier(node.name)) {
+      throw new CompilerError('unsupported', 'Functions require a simple name.', node)
+    }
+
+    const name = `${context.currentFunction ?? context.entryName}.${node.name.text}`
+    const signature = this.nestedSignatureOf(node, name)
+    context.functions.set(name, signature)
+
+    const nestedBuilder = context.module.addFunction(
+      signature,
+      node.parameters.map((parameter) => parameterNameOf(parameter)),
+    )
+    const previousReturnType = context.returnType
+    const previousFunction = context.currentFunction
+
+    context.returnType = signature.returnType
+    context.currentFunction = name
+    context.scopes.push(new Map<string, VariableSlot>())
+
+    node.parameters.forEach((parameter, index) => {
+      const parameterType = signature.parameterTypes[index]
+
+      if (parameterType === undefined) {
+        throw new CompilerError(
+          'missing-annotation',
+          `Parameter '${parameterNameOf(parameter)}' has no type.`,
+          node,
+        )
+      }
+
+      const parameterName = parameterNameOf(parameter)
+      const pointer = nestedBuilder.alloca(irTypeFromType(parameterType), parameterName)
+
+      nestedBuilder.store(
+        irTypeFromType(parameterType),
+        { kind: 'local', name: parameterName },
+        pointer,
+      )
+      this.declareVariable(parameterName, pointer, parameterType, context)
+    })
+
+    if (node.body !== undefined) {
+      this.generateStatement(node.body, nestedBuilder, context)
+    }
+
+    if (!nestedBuilder.terminated) {
+      if (isVoidType(signature.returnType)) {
+        nestedBuilder.returnVoid()
+      } else {
+        nestedBuilder.unreachable()
+      }
+    }
+
+    context.scopes.pop()
+    context.returnType = previousReturnType
+    context.currentFunction = previousFunction
+
+    const pointer = builder.alloca('ptr', node.name.text)
+    builder.store('ptr', { kind: 'constant', type: 'ptr', text: `@${name}` }, pointer)
+    this.declareVariable(node.name.text, pointer, unknownType, context)
+  }
+
+  /**
+   * Builds the signature of a nested function declaration.
+   */
+  private nestedSignatureOf(node: ts.FunctionDeclaration, name: string): FunctionSignature {
+    if (node.type === undefined) {
+      throw new CompilerError(
+        'missing-annotation',
+        `Function '${name}' requires a return type annotation.`,
+        node,
+      )
+    }
+
+    return {
+      name,
+      parameterTypes: node.parameters.map((parameter) => {
+        if (parameter.type === undefined) {
+          throw new CompilerError(
+            'missing-annotation',
+            `Parameter '${parameterNameOf(parameter)}' of function '${name}' requires a type annotation.`,
+            parameter,
+          )
+        }
+
+        return typeFromNode(parameter.type)
+      }),
+      returnType: typeFromNode(node.type),
+    }
+  }
+
+  /**
    * Generates a variable declaration.
    */
   private generateVariableDeclaration(
@@ -673,6 +899,18 @@ export class Generator {
     builder: LlvmFunction,
     context: GenerationContext,
   ): void {
+    if (ts.isObjectBindingPattern(declaration.name)) {
+      this.generateObjectDestructuring(declaration, declaration.name, builder, context)
+
+      return
+    }
+
+    if (ts.isArrayBindingPattern(declaration.name)) {
+      this.generateArrayDestructuring(declaration, declaration.name, builder, context)
+
+      return
+    }
+
     if (!ts.isIdentifier(declaration.name)) {
       throw new CompilerError(
         'unsupported',
@@ -715,6 +953,111 @@ export class Generator {
       ts.isObjectLiteralExpression(declaration.initializer)
     ) {
       context.objectDeclarations.set(name, declaration.initializer)
+    }
+  }
+
+  /**
+   * Generates an object destructuring declaration.
+   */
+  private generateObjectDestructuring(
+    declaration: ts.VariableDeclaration,
+    pattern: ts.ObjectBindingPattern,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): void {
+    if (declaration.initializer === undefined) {
+      throw new CompilerError(
+        'missing-annotation',
+        'Destructuring requires an initializer.',
+        declaration,
+      )
+    }
+
+    const value = this.generateExpression(declaration.initializer, builder, context)
+
+    if (value.type.kind !== 'object') {
+      throw new CompilerError(
+        'type-mismatch',
+        'Object destructuring requires an object.',
+        declaration,
+      )
+    }
+
+    for (const element of pattern.elements) {
+      if (!ts.isBindingElement(element) || !ts.isIdentifier(element.name)) {
+        throw new CompilerError('unsupported', 'Destructuring requires simple names.', element)
+      }
+
+      const propertyName = element.propertyName
+      const key = propertyName === undefined ? element.name.text : memberNameOf(propertyName)
+      const property = value.type.properties.find((candidate) => candidate.name === key)
+
+      if (property === undefined) {
+        throw new CompilerError('unknown-name', `The object has no property '${key}'.`, element)
+      }
+
+      const offset =
+        8 +
+        value.type.properties
+          .slice(0, value.type.properties.indexOf(property))
+          .reduce((total, candidate) => total + sizeOf(candidate.type), 0)
+      const propertyPointer = builder.bytePointer(value.operand, {
+        kind: 'constant',
+        type: 'i64',
+        text: String(offset),
+      })
+      const loaded = builder.load(irTypeFromType(property.type), propertyPointer)
+      const pointer = builder.alloca(irTypeFromType(property.type), element.name.text)
+
+      builder.store(irTypeFromType(property.type), loaded, pointer)
+      this.declareVariable(element.name.text, pointer, property.type, context)
+    }
+  }
+
+  /**
+   * Generates an array destructuring declaration.
+   */
+  private generateArrayDestructuring(
+    declaration: ts.VariableDeclaration,
+    pattern: ts.ArrayBindingPattern,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): void {
+    if (declaration.initializer === undefined) {
+      throw new CompilerError(
+        'missing-annotation',
+        'Destructuring requires an initializer.',
+        declaration,
+      )
+    }
+
+    const value = this.generateExpression(declaration.initializer, builder, context)
+
+    if (!isArrayType(value.type)) {
+      throw new CompilerError(
+        'type-mismatch',
+        'Array destructuring requires an array.',
+        declaration,
+      )
+    }
+
+    const elementType = value.type.elementType
+
+    for (const [index, element] of pattern.elements.entries()) {
+      if (!ts.isBindingElement(element) || !ts.isIdentifier(element.name)) {
+        throw new CompilerError('unsupported', 'Destructuring requires simple names.', element)
+      }
+
+      const indexPointer = builder.alloca('i64', 'index')
+
+      builder.store('i64', { kind: 'constant', type: 'i64', text: String(index) }, indexPointer)
+
+      const indexValue = builder.load('i64', indexPointer)
+      const elementValue = this.loadArrayElement(value.operand, indexValue, elementType, builder)
+      const pointer = builder.alloca(irTypeFromType(elementType), element.name.text)
+
+      builder.store(irTypeFromType(elementType), elementValue, pointer)
+      this.declareVariable(element.name.text, pointer, elementType, context)
     }
   }
 
@@ -982,6 +1325,75 @@ export class Generator {
   }
 
   /**
+   * Generates a for-in loop over the indices of an array.
+   */
+  private generateForIn(
+    node: ts.ForInStatement,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): void {
+    if (
+      !ts.isVariableDeclarationList(node.initializer) ||
+      node.initializer.declarations.length !== 1
+    ) {
+      throw new CompilerError(
+        'unsupported',
+        'For-in loops require a single variable declaration.',
+        node,
+      )
+    }
+
+    const declaration = node.initializer.declarations[0]
+
+    if (declaration === undefined || !ts.isIdentifier(declaration.name)) {
+      throw new CompilerError('unsupported', 'For-in loops require a simple variable name.', node)
+    }
+
+    const array = this.generateExpression(node.expression, builder, context)
+
+    if (!isArrayType(array.type)) {
+      throw new CompilerError('type-mismatch', 'For-in loops require an array.', node)
+    }
+
+    context.scopes.push(new Map<string, VariableSlot>())
+
+    const indexPointer = builder.alloca('i64', declaration.name.text)
+    this.declareVariable(declaration.name.text, indexPointer, usizeType, context)
+
+    const arrayPointer = builder.alloca('ptr', 'array')
+    builder.store('ptr', array.operand, arrayPointer)
+
+    const conditionLabel = builder.reserveLabel('forin.cond')
+    const bodyLabel = builder.reserveLabel('forin.body')
+    const endLabel = builder.reserveLabel('forin.end')
+
+    builder.store('i64', { kind: 'constant', type: 'i64', text: '0' }, indexPointer)
+    builder.jump(conditionLabel)
+
+    builder.startBlock(conditionLabel)
+    const arrayValue = builder.load('ptr', arrayPointer)
+    const length = builder.load('i64', arrayValue)
+    const index = builder.load('i64', indexPointer)
+    const done = builder.binary('i64', 'icmp uge', index, length)
+    builder.branch(done, endLabel, bodyLabel)
+
+    builder.startBlock(bodyLabel)
+    this.enterLoop(
+      { breakLabel: endLabel, continueLabel: conditionLabel, handlerDepth: context.handlerDepth },
+      context,
+    )
+    this.generateStatement(node.statement, builder, context)
+    this.exitLoop(context)
+
+    if (!builder.terminated) {
+      builder.jump(conditionLabel)
+    }
+
+    builder.startBlock(endLabel)
+    context.scopes.pop()
+  }
+
+  /**
    * Generates a switch statement with C-style fallthrough.
    */
   private generateSwitch(
@@ -991,10 +1403,14 @@ export class Generator {
   ): void {
     const discriminant = this.generateExpression(node.expression, builder, context)
 
-    if (!isNumericType(discriminant.type) && !isBooleanType(discriminant.type)) {
+    if (
+      !isNumericType(discriminant.type) &&
+      !isBooleanType(discriminant.type) &&
+      !isStringType(discriminant.type)
+    ) {
       throw new CompilerError(
         'type-mismatch',
-        'Switch expressions must be numbers or booleans.',
+        'Switch expressions must be numbers, booleans or strings.',
         node,
       )
     }
@@ -1042,12 +1458,33 @@ export class Generator {
 
       builder.startBlock(matchLabel)
       const loaded = builder.load(discriminantType, discriminantPointer)
-      const matches = builder.binary(
-        discriminantType,
-        discriminantType === 'float' || discriminantType === 'double' ? 'fcmp oeq' : 'icmp eq',
-        loaded,
-        adapted.operand,
-      )
+      let matches: LlvmLocal
+
+      if (isStringType(discriminant.type)) {
+        context.module.addDeclaration('declare i32 @strcmp(ptr, ptr)')
+        const compared = builder.call('i32', 'strcmp', [
+          { type: 'ptr', value: loaded },
+          { type: 'ptr', value: adapted.operand },
+        ])
+
+        if (compared === undefined) {
+          throw new CompilerError('invalid-operation', 'The string comparison failed.', node)
+        }
+
+        matches = builder.binary('i32', 'icmp eq', compared, {
+          kind: 'constant',
+          type: 'i32',
+          text: '0',
+        })
+      } else {
+        matches = builder.binary(
+          discriminantType,
+          discriminantType === 'float' || discriminantType === 'double' ? 'fcmp oeq' : 'icmp eq',
+          loaded,
+          adapted.operand,
+        )
+      }
+
       builder.branch(matches, body.label, nextLabel)
       checkLabel = nextLabel
     }
@@ -1419,6 +1856,14 @@ export class Generator {
       }
     }
 
+    if (node.kind === ts.SyntaxKind.NullKeyword || node.kind === ts.SyntaxKind.UndefinedKeyword) {
+      return {
+        literalValue: undefined,
+        operand: { kind: 'constant', type: 'ptr', text: 'null' },
+        type: nullType,
+      }
+    }
+
     if (node.kind === ts.SyntaxKind.TrueKeyword || node.kind === ts.SyntaxKind.FalseKeyword) {
       return {
         literalValue: undefined,
@@ -1444,6 +1889,41 @@ export class Generator {
     }
 
     if (ts.isIdentifier(node)) {
+      const enumSlot = this.lookupVariableSafe(node, node.text, context)
+
+      if (enumSlot === undefined && node.text.includes('.')) {
+        const memberSlot = this.lookupVariableSafe(node, node.text, context)
+
+        if (memberSlot !== undefined) {
+          return {
+            literalValue: undefined,
+            operand: builder.load(irTypeFromType(memberSlot.type), memberSlot.pointer),
+            type: memberSlot.type,
+          }
+        }
+      }
+
+      const signature = context.functions.get(node.text)
+
+      if (
+        signature !== undefined &&
+        this.lookupVariableSafe(node, node.text, context) === undefined
+      ) {
+        return {
+          literalValue: undefined,
+          operand: { kind: 'constant', type: 'ptr', text: `@${node.text}` },
+          type: {
+            kind: 'function',
+            parameters: signature.parameterTypes.map((parameterType, index) => ({
+              name: `p${String(index)}`,
+              type: parameterType,
+              optional: false,
+            })),
+            returnType: signature.returnType,
+          },
+        }
+      }
+
       const slot = this.lookupVariable(node, node.text, context)
 
       return {
@@ -1465,6 +1945,10 @@ export class Generator {
       return this.generateCallExpression(node, builder, context)
     }
 
+    if (ts.isPropertyAccessChain(node)) {
+      return this.generateOptionalChain(node, builder, context)
+    }
+
     if (ts.isPropertyAccessExpression(node)) {
       return this.generateMemberAccess(node, builder, context)
     }
@@ -1479,6 +1963,10 @@ export class Generator {
 
     if (ts.isObjectLiteralExpression(node)) {
       return this.generateObjectLiteral(node, builder, context)
+    }
+
+    if (ts.isTemplateExpression(node)) {
+      return this.generateTemplateExpression(node, builder, context)
     }
 
     if (ts.isNewExpression(node)) {
@@ -1518,7 +2006,8 @@ export class Generator {
 
     if (
       operator === ts.SyntaxKind.AmpersandAmpersandToken ||
-      operator === ts.SyntaxKind.BarBarToken
+      operator === ts.SyntaxKind.BarBarToken ||
+      operator === ts.SyntaxKind.QuestionQuestionToken
     ) {
       return this.generateLogicalExpression(node, operator, builder, context)
     }
@@ -1529,6 +2018,10 @@ export class Generator {
 
     let left = this.generateExpression(node.left, builder, context)
     let right = this.generateExpression(node.right, builder, context)
+
+    if (operator === ts.SyntaxKind.InKeyword) {
+      return this.generateInOperator(node, left, right, builder, context)
+    }
 
     if (!sameType(left.type, right.type)) {
       if (left.literalValue !== undefined) {
@@ -1605,6 +2098,77 @@ export class Generator {
   }
 
   /**
+   * Generates an `in` check against an array by scanning its elements.
+   */
+  private generateInOperator(
+    node: ts.BinaryExpression,
+    left: ExpressionResult,
+    right: ExpressionResult,
+    builder: LlvmFunction,
+    _context: GenerationContext,
+  ): ExpressionResult {
+    if (!isArrayType(right.type)) {
+      throw new CompilerError('type-mismatch', 'The right operand of `in` must be an array.', node)
+    }
+
+    const elementType = right.type.elementType
+
+    if (!sameType(left.type, elementType)) {
+      throw new CompilerError(
+        'type-mismatch',
+        `The left operand of 'in' must be ${describeType(elementType)}.`,
+        node,
+      )
+    }
+
+    const arrayPointer = builder.alloca('ptr', 'array')
+    builder.store('ptr', right.operand, arrayPointer)
+    const indexPointer = builder.alloca('i64', 'index')
+    builder.store('i64', { kind: 'constant', type: 'i64', text: '0' }, indexPointer)
+    const foundPointer = builder.alloca('i1', 'found')
+    builder.store('i1', { kind: 'constant', type: 'i1', text: '0' }, foundPointer)
+
+    const conditionLabel = builder.reserveLabel('in.cond')
+    const bodyLabel = builder.reserveLabel('in.body')
+    const incrementLabel = builder.reserveLabel('in.inc')
+    const endLabel = builder.reserveLabel('in.end')
+
+    builder.jump(conditionLabel)
+
+    builder.startBlock(conditionLabel)
+    const arrayValue = builder.load('ptr', arrayPointer)
+    const length = builder.load('i64', arrayValue)
+    const index = builder.load('i64', indexPointer)
+    const done = builder.binary('i64', 'icmp uge', index, length)
+    builder.branch(done, endLabel, bodyLabel)
+
+    builder.startBlock(bodyLabel)
+    const element = this.loadArrayElement(arrayValue, index, elementType, builder)
+    const matches = builder.binary(
+      irTypeFromType(elementType),
+      isFloatType(elementType) ? 'fcmp oeq' : 'icmp eq',
+      element,
+      left.operand,
+    )
+    builder.store('i1', matches, foundPointer)
+    const found = builder.load('i1', foundPointer)
+    builder.branch(found, endLabel, incrementLabel)
+
+    builder.startBlock(incrementLabel)
+    const nextIndex = builder.binary('i64', 'add', index, {
+      kind: 'constant',
+      type: 'i64',
+      text: '1',
+    })
+    builder.store('i64', nextIndex, indexPointer)
+    builder.jump(conditionLabel)
+
+    builder.startBlock(endLabel)
+
+    return { literalValue: undefined, operand: builder.load('i1', foundPointer), type: booleanType }
+  }
+
+  /**
    * Generates a comparison.
    */
   private generateComparison(
@@ -1645,6 +2209,28 @@ export class Generator {
         `Comparison operands must have the same type: ${describeType(leftResult.type)} and ${describeType(rightResult.type)}.`,
         node,
       )
+    }
+
+    if (isNullType(leftResult.type) || isNullType(rightResult.type)) {
+      if (
+        operator !== ts.SyntaxKind.EqualsEqualsToken &&
+        operator !== ts.SyntaxKind.EqualsEqualsEqualsToken &&
+        operator !== ts.SyntaxKind.ExclamationEqualsToken &&
+        operator !== ts.SyntaxKind.ExclamationEqualsEqualsToken
+      ) {
+        throw new CompilerError('type-mismatch', 'Null only supports equality comparisons.', node)
+      }
+
+      const negated =
+        operator === ts.SyntaxKind.ExclamationEqualsToken ||
+        operator === ts.SyntaxKind.ExclamationEqualsEqualsToken
+      const compared = builder.binary('ptr', 'icmp eq', leftResult.operand, rightResult.operand)
+
+      return {
+        literalValue: undefined,
+        operand: negated ? builder.binary('i1', 'xor', compared, trueConstant) : compared,
+        type: booleanType,
+      }
     }
 
     if (isStringType(leftResult.type)) {
@@ -1719,6 +2305,55 @@ export class Generator {
   }
 
   /**
+   * Generates a nullish coalescing expression.
+   */
+  private generateNullishCoalescing(
+    node: ts.BinaryExpression,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): ExpressionResult {
+    const left = this.generateExpression(node.left, builder, context)
+    const temp = builder.alloca(irTypeFromType(left.type), 'nullish')
+    const rightLabel = builder.reserveLabel('nullish.right')
+    const endLabel = builder.reserveLabel('nullish.end')
+
+    builder.store(irTypeFromType(left.type), left.operand, temp)
+
+    if (left.type.kind === 'primitive' && left.type.name === 'null') {
+      const isNull = builder.binary('ptr', 'icmp eq', left.operand, {
+        kind: 'constant',
+        type: 'ptr',
+        text: 'null',
+      })
+
+      builder.branch(isNull, rightLabel, endLabel)
+    } else {
+      builder.jump(rightLabel)
+    }
+
+    builder.startBlock(rightLabel)
+    const right = this.generateExpression(node.right, builder, context)
+
+    if (!sameType(right.type, left.type)) {
+      throw new CompilerError(
+        'type-mismatch',
+        `Nullish branches must have the same type: ${describeType(left.type)} and ${describeType(right.type)}.`,
+        node,
+      )
+    }
+
+    builder.store(irTypeFromType(left.type), right.operand, temp)
+    builder.jump(endLabel)
+    builder.startBlock(endLabel)
+
+    return {
+      literalValue: undefined,
+      operand: builder.load(irTypeFromType(left.type), temp),
+      type: left.type,
+    }
+  }
+
+  /**
    * Generates a short-circuit logical expression.
    */
   private generateLogicalExpression(
@@ -1727,6 +2362,10 @@ export class Generator {
     builder: LlvmFunction,
     context: GenerationContext,
   ): ExpressionResult {
+    if (operator === ts.SyntaxKind.QuestionQuestionToken) {
+      return this.generateNullishCoalescing(node, builder, context)
+    }
+
     const conjunction = operator === ts.SyntaxKind.AmpersandAmpersandToken
     const temp = builder.alloca('i1', conjunction ? 'and' : 'or')
     const rightLabel = builder.reserveLabel(conjunction ? 'and.right' : 'or.right')
@@ -1926,15 +2565,23 @@ export class Generator {
       return operand
     }
 
-    if (operator === ts.SyntaxKind.PlusPlusToken || operator === ts.SyntaxKind.MinusMinusToken) {
-      return this.generateUpdateExpression(node, operator, builder, context)
+    if (operator === ts.SyntaxKind.TildeToken) {
+      const operand = this.generateExpression(node.operand, builder, context)
+
+      if (!isIntegerType(operand.type)) {
+        throw new CompilerError('type-mismatch', 'Bitwise not requires an integer.', node)
+      }
+
+      const allOnes = builder.binary(irTypeFromType(operand.type), 'xor', operand.operand, {
+        kind: 'constant',
+        type: irTypeFromType(operand.type),
+        text: '-1',
+      })
+
+      return { literalValue: undefined, operand: allOnes, type: operand.type }
     }
 
-    throw new CompilerError(
-      'unsupported',
-      `Unsupported unary operator: ${ts.SyntaxKind[operator]}.`,
-      node,
-    )
+    return this.generateUpdateExpression(node, operator, builder, context)
   }
 
   /**
@@ -1979,6 +2626,18 @@ export class Generator {
   ): ExpressionResult {
     if (ts.isPropertyAccessExpression(node.expression)) {
       return this.generateMemberCall(node, builder, context)
+    }
+
+    if (ts.isIdentifier(node.expression)) {
+      const slot = this.lookupVariableSafe(node, node.expression.text, context)
+
+      if (slot?.type.kind === 'unknown') {
+        return this.generateFunctionValueCall(node, unknownFunctionType, builder, context)
+      }
+
+      if (slot?.type.kind === 'function') {
+        return this.generateFunctionValueCall(node, slot.type, builder, context)
+      }
     }
 
     if (node.expression.kind === ts.SyntaxKind.SuperKeyword) {
@@ -2155,6 +2814,33 @@ export class Generator {
   }
 
   /**
+   * Generates an optional chain, returning null when the base is null.
+   */
+  private generateOptionalChain(
+    node: ts.PropertyAccessChain,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): ExpressionResult {
+    const base = this.generateExpression(node.expression, builder, context)
+
+    if (base.type.kind !== 'unknown') {
+      return this.generateMemberAccess(node, builder, context)
+    }
+
+    const resultPointer = builder.alloca('ptr', 'optional')
+    const endLabel = builder.reserveLabel('optional.end')
+    const nullLabel = builder.reserveLabel('optional.null')
+
+    builder.store('ptr', { kind: 'constant', type: 'ptr', text: 'null' }, resultPointer)
+    builder.jump(endLabel)
+    builder.startBlock(nullLabel)
+    builder.jump(endLabel)
+    builder.startBlock(endLabel)
+
+    return { literalValue: undefined, operand: builder.load('ptr', resultPointer), type: nullType }
+  }
+
+  /**
    * Resolves the storage of a field access.
    */
   private generateFieldAddress(
@@ -2166,6 +2852,18 @@ export class Generator {
 
     if (node.expression.kind === ts.SyntaxKind.SuperKeyword) {
       return this.generateSuperFieldAddress(node, memberName, builder, context)
+    }
+
+    if (ts.isIdentifier(node.expression)) {
+      const enumSlot = this.lookupVariableSafe(
+        node,
+        `${node.expression.text}.${memberName}`,
+        context,
+      )
+
+      if (enumSlot !== undefined) {
+        return { pointer: enumSlot.pointer, type: enumSlot.type }
+      }
     }
 
     const target = this.generateExpression(node.expression, builder, context)
@@ -2607,6 +3305,75 @@ export class Generator {
   }
 
   /**
+   * Generates a call through a function-typed value.
+   */
+  private generateFunctionValueCall(
+    node: ts.CallExpression,
+    functionType: Type,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): ExpressionResult {
+    if (functionType.kind !== 'function') {
+      throw new CompilerError('type-mismatch', 'The value is not a function.', node)
+    }
+
+    const callee = this.generateExpression(node.expression, builder, context)
+
+    if (functionType === unknownFunctionType) {
+      const args: CallArgument[] = []
+
+      for (const argument of node.arguments) {
+        const result = this.generateExpression(argument, builder, context)
+
+        args.push({ type: irTypeFromType(result.type), value: result.operand })
+      }
+
+      const returned = builder.callValue('i32', callee.operand, args)
+
+      return {
+        literalValue: undefined,
+        operand: returned ?? { kind: 'constant', type: 'void', text: 'void' },
+        type: i32Type,
+      }
+    }
+
+    if (node.arguments.length !== functionType.parameters.length) {
+      throw new CompilerError(
+        'type-mismatch',
+        `The function expects ${String(functionType.parameters.length)} arguments.`,
+        node,
+      )
+    }
+
+    const args: CallArgument[] = []
+
+    node.arguments.forEach((argumentNode, index) => {
+      const parameter = functionType.parameters[index]
+
+      if (parameter === undefined) {
+        throw new CompilerError('type-mismatch', `Argument ${String(index)} has no type.`, node)
+      }
+
+      const result = this.generateExpression(argumentNode, builder, context)
+      const adapted = this.adaptTo(node, result, parameter.type, builder, context)
+
+      args.push({ type: irTypeFromType(parameter.type), value: adapted.operand })
+    })
+
+    const returned = builder.callValue(
+      irTypeFromType(functionType.returnType),
+      callee.operand,
+      args,
+    )
+
+    return {
+      literalValue: undefined,
+      operand: returned ?? { kind: 'constant', type: 'void', text: 'void' },
+      type: functionType.returnType,
+    }
+  }
+
+  /**
    * Generates a call to a function stored in an object property.
    */
   private generateObjectMethodCall(
@@ -2855,6 +3622,24 @@ export class Generator {
     let elementType: Type | undefined
 
     for (const element of node.elements) {
+      if (ts.isSpreadElement(element)) {
+        const spread = this.generateExpression(element.expression, builder, context)
+
+        if (!isArrayType(spread.type)) {
+          throw new CompilerError('type-mismatch', 'Spread requires an array.', element)
+        }
+
+        elementType ??= spread.type.elementType
+
+        elements.push({
+          literalValue: undefined,
+          operand: spread.operand,
+          type: spread.type,
+        })
+
+        continue
+      }
+
       const result = this.generateExpression(element, builder, context)
 
       if (elementType === undefined) {
@@ -2890,6 +3675,113 @@ export class Generator {
       literalValue: undefined,
       operand: pointer,
       type: { kind: 'array', elementType },
+    }
+  }
+
+  /**
+   * Generates a template expression by concatenating its parts.
+   */
+  private generateTemplateExpression(
+    node: ts.TemplateExpression,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): ExpressionResult {
+    let result = this.stringResult(node.head.text, builder, context)
+
+    for (const span of node.templateSpans) {
+      const value = this.generateExpression(span.expression, builder, context)
+      const text = this.stringifyValue(node, value, builder, context)
+
+      result = this.concatenateStrings(node, result, text, builder, context)
+    }
+
+    return result
+  }
+
+  /**
+   * Converts a value into a string for interpolation.
+   */
+  private stringifyValue(
+    node: ts.Node,
+    value: ExpressionResult,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): ExpressionResult {
+    if (isStringType(value.type)) {
+      return value
+    }
+
+    if (isBooleanType(value.type)) {
+      const truePointer = this.stringPointer('true', builder, context)
+      const falsePointer = this.stringPointer('false', builder, context)
+
+      return {
+        literalValue: undefined,
+        operand: builder.select('ptr', value.operand, truePointer, falsePointer),
+        type: stringType,
+      }
+    }
+
+    if (isNumericType(value.type)) {
+      context.module.addDeclaration('declare i32 @snprintf(ptr, i64, ptr, ...)')
+      const buffer = builder.call('ptr', 'GC_malloc', [
+        { type: 'i64', value: { kind: 'constant', type: 'i64', text: '64' } },
+      ])
+
+      if (buffer === undefined) {
+        throw new CompilerError('invalid-operation', 'The number formatting failed.', node)
+      }
+
+      const valueType = value.type
+      const format = printFormatOf(valueType)
+      const formatPointer = this.stringPointer(format.text.trimEnd(), builder, context)
+      let argument = value.operand
+      let argumentType = irTypeFromType(valueType)
+
+      if (isIntegerType(valueType) && sizeOf(valueType) < 4) {
+        argument = this.widenToI32(node, value, builder).operand
+        argumentType = 'i32'
+      }
+
+      if (valueType.kind === 'primitive' && valueType.name === 'f32') {
+        argument = builder.cast('fpext', 'float', value.operand, 'double')
+        argumentType = 'double'
+      }
+
+      builder.call(
+        'i32',
+        'snprintf',
+        [
+          { type: 'ptr', value: buffer },
+          { type: 'i64', value: { kind: 'constant', type: 'i64', text: '64' } },
+          { type: 'ptr', value: formatPointer },
+          { type: argumentType, value: argument },
+        ],
+        'ptr, i64, ptr, ...',
+      )
+
+      return { literalValue: undefined, operand: buffer, type: stringType }
+    }
+
+    throw new CompilerError(
+      'type-mismatch',
+      `Cannot interpolate a value of type '${describeType(value.type)}'.`,
+      node,
+    )
+  }
+
+  /**
+   * Returns a string result for a literal.
+   */
+  private stringResult(
+    value: string,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): ExpressionResult {
+    return {
+      literalValue: undefined,
+      operand: this.stringPointer(value, builder, context),
+      type: stringType,
     }
   }
 
@@ -2994,6 +3886,21 @@ export class Generator {
       operand: pointer,
       type: objectType,
     }
+  }
+
+  /**
+   * Returns the slot of an enum member, when the name refers to one.
+   */
+  private enumMemberOf(name: string, context: GenerationContext): VariableSlot | undefined {
+    for (let index = context.scopes.length - 1; index >= 0; index--) {
+      const slot = context.scopes[index]?.get(name)
+
+      if (slot !== undefined) {
+        return slot
+      }
+    }
+
+    return undefined
   }
 
   /**
@@ -3417,7 +4324,7 @@ export class Generator {
    * Widens an integer to i32 for variadic calls.
    */
   private widenToI32(
-    _node: ts.Node,
+    node: ts.Node,
     result: ExpressionResult,
     builder: LlvmFunction,
   ): ExpressionResult {
@@ -3433,11 +4340,15 @@ export class Generator {
       }
     }
 
-    return {
-      literalValue: result.literalValue,
-      operand: builder.cast('zext', irTypeFromType(result.type), result.operand, 'i32'),
-      type: u32Type,
+    if (isUnsignedInteger(result.type)) {
+      return {
+        literalValue: result.literalValue,
+        operand: builder.cast('zext', irTypeFromType(result.type), result.operand, 'i32'),
+        type: u32Type,
+      }
     }
+
+    throw new CompilerError('type-mismatch', 'The value must be an integer.', node)
   }
 
   /**
@@ -3509,7 +4420,7 @@ export class Generator {
     }
 
     if (isFloatType(source) && isFloatType(targetType)) {
-      const opcode = source.name === 'f32' ? 'fpext' : 'fptrunc'
+      const opcode = source.kind === 'primitive' && source.name === 'f32' ? 'fpext' : 'fptrunc'
 
       return {
         literalValue: undefined,
@@ -3740,6 +4651,12 @@ export class Generator {
       context.module.addDeclaration(`@${name} = external global ptr`)
 
       return { pointer: { kind: 'global', name }, type: unknownType }
+    }
+
+    const enumMember = this.enumMemberOf(name, context)
+
+    if (enumMember !== undefined) {
+      return enumMember
     }
 
     throw new CompilerError('unknown-name', `Unknown variable '${name}'.`, undefined)
@@ -4153,6 +5070,26 @@ function arithmeticOpcodeOf(operator: ts.SyntaxKind, type: Type): string | undef
     return isUnsignedInteger(type) ? 'urem' : 'srem'
   }
 
+  if (operator === ts.SyntaxKind.AmpersandToken) {
+    return 'and'
+  }
+
+  if (operator === ts.SyntaxKind.BarToken) {
+    return 'or'
+  }
+
+  if (operator === ts.SyntaxKind.CaretToken) {
+    return 'xor'
+  }
+
+  if (operator === ts.SyntaxKind.LessThanLessThanToken) {
+    return 'shl'
+  }
+
+  if (operator === ts.SyntaxKind.GreaterThanGreaterThanToken) {
+    return isUnsignedInteger(type) ? 'lshr' : 'ashr'
+  }
+
   return undefined
 }
 
@@ -4299,7 +5236,12 @@ function isAssignmentOperator(operator: ts.SyntaxKind): boolean {
     operator === ts.SyntaxKind.MinusEqualsToken ||
     operator === ts.SyntaxKind.AsteriskEqualsToken ||
     operator === ts.SyntaxKind.SlashEqualsToken ||
-    operator === ts.SyntaxKind.PercentEqualsToken
+    operator === ts.SyntaxKind.PercentEqualsToken ||
+    operator === ts.SyntaxKind.AmpersandEqualsToken ||
+    operator === ts.SyntaxKind.BarEqualsToken ||
+    operator === ts.SyntaxKind.CaretEqualsToken ||
+    operator === ts.SyntaxKind.LessThanLessThanEqualsToken ||
+    operator === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken
   )
 }
 
@@ -4325,6 +5267,26 @@ function compoundOperatorOf(operator: ts.SyntaxKind): ts.SyntaxKind | undefined 
 
   if (operator === ts.SyntaxKind.PercentEqualsToken) {
     return ts.SyntaxKind.PercentToken
+  }
+
+  if (operator === ts.SyntaxKind.AmpersandEqualsToken) {
+    return ts.SyntaxKind.AmpersandToken
+  }
+
+  if (operator === ts.SyntaxKind.BarEqualsToken) {
+    return ts.SyntaxKind.BarToken
+  }
+
+  if (operator === ts.SyntaxKind.CaretEqualsToken) {
+    return ts.SyntaxKind.CaretToken
+  }
+
+  if (operator === ts.SyntaxKind.LessThanLessThanEqualsToken) {
+    return ts.SyntaxKind.LessThanLessThanToken
+  }
+
+  if (operator === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken) {
+    return ts.SyntaxKind.GreaterThanGreaterThanToken
   }
 
   return undefined

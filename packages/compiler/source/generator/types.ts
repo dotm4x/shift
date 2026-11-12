@@ -1,13 +1,7 @@
 import type * as ts from 'typescript'
 
 import { typeFromNode } from '../analyzer/types/syntax.js'
-import type {
-  ArrayType,
-  PrimitiveType,
-  ReferenceType,
-  Type,
-  VoidType,
-} from '../analyzer/types/type.js'
+import type { ArrayType, ReferenceType, Type, VoidType } from '../analyzer/types/type.js'
 
 import type { LlvmType } from './values.js'
 
@@ -111,7 +105,7 @@ export function sizeOf(type: Type): number {
 }
 
 /** Determines whether the type is a signed integer. */
-export function isSignedInteger(type: Type): type is PrimitiveType {
+export function isSignedInteger(type: Type): boolean {
   return (
     type.kind === 'primitive' &&
     (type.name === 'i8' || type.name === 'i16' || type.name === 'i32' || type.name === 'i64')
@@ -119,7 +113,7 @@ export function isSignedInteger(type: Type): type is PrimitiveType {
 }
 
 /** Determines whether the type is an unsigned integer. */
-export function isUnsignedInteger(type: Type): type is PrimitiveType {
+export function isUnsignedInteger(type: Type): boolean {
   return (
     type.kind === 'primitive' &&
     (type.name === 'u8' ||
@@ -131,17 +125,17 @@ export function isUnsignedInteger(type: Type): type is PrimitiveType {
 }
 
 /** Determines whether the type is an integer of any signedness. */
-export function isIntegerType(type: Type): type is PrimitiveType {
+export function isIntegerType(type: Type): boolean {
   return isSignedInteger(type) || isUnsignedInteger(type)
 }
 
 /** Determines whether the type is a floating point number. */
-export function isFloatType(type: Type): type is PrimitiveType {
+export function isFloatType(type: Type): boolean {
   return type.kind === 'primitive' && (type.name === 'f32' || type.name === 'f64')
 }
 
 /** Determines whether the type is any number. */
-export function isNumericType(type: Type): type is PrimitiveType {
+export function isNumericType(type: Type): boolean {
   return isIntegerType(type) || isFloatType(type)
 }
 
@@ -151,12 +145,17 @@ export function isVoidType(type: Type): type is VoidType {
 }
 
 /** Determines whether the type is a boolean. */
-export function isBooleanType(type: Type): type is PrimitiveType {
+export function isBooleanType(type: Type): boolean {
   return type.kind === 'primitive' && type.name === 'boolean'
 }
 
+/** Determines whether the type is null. */
+export function isNullType(type: Type): boolean {
+  return type.kind === 'primitive' && type.name === 'null'
+}
+
 /** Determines whether the type is a string. */
-export function isStringType(type: Type): type is PrimitiveType {
+export function isStringType(type: Type): boolean {
   return type.kind === 'primitive' && type.name === 'string'
 }
 

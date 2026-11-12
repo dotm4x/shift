@@ -110,18 +110,34 @@ export class Analyzer {
     current: Scope,
     context: CollectionContext,
   ): void {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+    if (ts.isVariableDeclaration(node)) {
       const list = node.parent
       const blockScoped =
         ts.isVariableDeclarationList(list) && (list.flags & ts.NodeFlags.BlockScoped) !== 0
 
-      this.declareSymbol(
-        current,
-        new Symbol(node.name.text, 'variable', node, blockScoped),
-        context,
-      )
+      if (ts.isIdentifier(node.name)) {
+        this.declareSymbol(
+          current,
+          new Symbol(node.name.text, 'variable', node, blockScoped),
+          context,
+        )
 
-      return
+        return
+      }
+
+      if (ts.isObjectBindingPattern(node.name) || ts.isArrayBindingPattern(node.name)) {
+        for (const element of node.name.elements) {
+          if (ts.isBindingElement(element) && ts.isIdentifier(element.name)) {
+            this.declareSymbol(
+              current,
+              new Symbol(element.name.text, 'variable', element, blockScoped),
+              context,
+            )
+          }
+        }
+
+        return
+      }
     }
 
     if (ts.isFunctionDeclaration(node) && node.name !== undefined) {

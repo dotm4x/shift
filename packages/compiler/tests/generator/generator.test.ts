@@ -429,10 +429,23 @@ describe('Generator', () => {
     expect(() => generate('function main(): void { }')).toThrow('reserved')
   })
 
-  it('rejects nested functions', () => {
-    expect(() => generate('function outer(): void { function inner(): void { } }')).toThrow(
-      'Nested functions',
-    )
+  it('generates nested functions', () => {
+    const source = [
+      'function outer(): i32 {',
+      '  function inner(): i32 {',
+      '    return 7',
+      '  }',
+      '',
+      '  return inner()',
+      '}',
+      '',
+      'let value = outer()',
+    ].join('\n')
+
+    const ir = generate(source)
+
+    expect(ir).toContain('define i32 @main.inner() {')
+    expect(ir).toContain('call i32 %t')
   })
 
   it('rejects mixed-type arithmetic', () => {
