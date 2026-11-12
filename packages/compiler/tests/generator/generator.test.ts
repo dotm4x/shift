@@ -468,4 +468,20 @@ describe('Generator', () => {
     expect(ir).toContain('store i32 1, ptr')
     expect(ir).toContain('store ptr %t')
   })
+
+  it('collects only exported function signatures', () => {
+    const source = [
+      'export function visible(value: i32): i32 {',
+      '  return value',
+      '}',
+      '',
+      'function hidden(value: i32): i32 {',
+      '  return value',
+      '}',
+    ].join('\n')
+    const file = new Parser().parse(source, new DiagnosticBag())
+    const signatures = new Generator().signaturesOf(file)
+
+    expect([...signatures.keys()]).toEqual(['visible'])
+  })
 })

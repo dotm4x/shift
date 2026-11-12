@@ -55,6 +55,10 @@ export interface GeneratorOptions {
   readonly entryName?: string
   /** Names available in the global scope without being declared. Defaults to no globals. */
   readonly globals?: readonly string[] | undefined
+  /** Signatures of functions defined in other modules and linked at build time. */
+  readonly externalFunctions?: ReadonlyMap<string, FunctionSignature> | undefined
+  /** Whether to generate the entry function that runs top-level statements. Defaults to true. */
+  readonly generateEntry?: boolean | undefined
 }
 
 /** Result of generating an expression. */
@@ -197,6 +201,7 @@ export class Generator {
 
     this.collectClasses(sourceFile, context)
     this.collectFunctions(sourceFile, context)
+    this.declareExternalFunctions(options.externalFunctions, context)
     this.generateClasses(context)
 
     for (const statement of sourceFile.statements) {
@@ -205,9 +210,40 @@ export class Generator {
       }
     }
 
-    this.generateEntry(sourceFile, context)
+    if (options.generateEntry ?? true) {
+      this.generateEntry(sourceFile, context)
+    }
 
     return context.module.emit()
+  }
+
+  /**
+   * Collects the signatures of the functions exported by the tree.
+   *
+   * Only declarations marked with `export` are part of a module's public surface; plain
+   * declarations stay private to their module.
+   *
+   * @param sourceFile Syntax tree to inspect.
+   * @returns Signatures keyed by function name.
+   */
+  public signaturesOf(sourceFile: ts.SourceFile): ReadonlyMap<string, FunctionSignature> {
+    const signatures = new Map<string, FunctionSignature>()
+
+    for (const statement of sourceFile.statements) {
+      if (!ts.isFunctionDeclaration(statement) || statement.body === undefined) {
+        continue
+      }
+
+      if (!isExported(statement)) {
+        continue
+      }
+
+      const name = functionNameOf(statement, 'main')
+
+      signatures.set(name, this.signatureOf(statement, name))
+    }
+
+    return signatures
   }
 
   /**
@@ -348,6 +384,24 @@ export class Generator {
       const name = functionNameOf(statement, context.entryName)
 
       context.functions.set(name, this.signatureOf(statement, name))
+    }
+  }
+
+  /**
+   * Emits external function declarations and registers their signatures.
+   */
+  private declareExternalFunctions(
+    externalFunctions: ReadonlyMap<string, FunctionSignature> | undefined,
+    context: GenerationContext,
+  ): void {
+    for (const [name, signature] of externalFunctions ?? []) {
+      context.functions.set(name, signature)
+
+      const parameters = signature.parameterTypes.map((type) => irTypeFromType(type)).join(', ')
+
+      context.module.addDeclaration(
+        `declare ${irTypeFromType(signature.returnType)} @${name}(${parameters})`,
+      )
     }
   }
 
@@ -774,6 +828,10 @@ export class Generator {
 
     for (const element of bindings.elements) {
       const name = element.name.text
+
+      if (context.functions.has(name)) {
+        continue
+      }
 
       context.module.addDeclaration(`@${name} = external global ptr`)
       context.globals.add(name)
@@ -2986,9 +3044,10 @@ export class Generator {
     }
 
     if (ts.isIdentifier(node.expression)) {
-      const slot = this.lookupVariableSafe(node, node.expression.text, context)
+      const name = node.expression.text
+      const slot = this.lookupVariableSafe(node, name, context)
 
-      if (slot?.type.kind === 'unknown') {
+      if (slot?.type.kind === 'unknown' && !context.functions.has(name)) {
         return this.generateFunctionValueCall(node, unknownFunctionType, builder, context)
       }
 
@@ -5131,6 +5190,7 @@ export class Generator {
    */
   private panic(message: string, builder: LlvmFunction, context: GenerationContext): void {
     context.module.addDeclaration('declare i32 @fprintf(ptr, ...)')
+    context.module.addDeclaration('declare i32 @printf(ptr, ...)')
     context.module.addDeclaration('declare void @exit(i32)')
     context.module.addDeclaration('@stderr = external global ptr')
 
@@ -6320,6 +6380,15 @@ function visibilityOf(member: ts.ClassElement): MemberVisibility {
 /**
  * Reads the name of a class member.
  */
+/**
+ * Returns whether a declaration carries the `export` modifier.
+ */
+function isExported(declaration: ts.FunctionDeclaration | ts.ClassDeclaration): boolean {
+  return (declaration.modifiers ?? []).some(
+    (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+  )
+}
+
 function memberNameOf(name: ts.MemberName | ts.PropertyName): string {
   if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
     return name.text
