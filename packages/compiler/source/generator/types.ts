@@ -40,6 +40,7 @@ export function irTypeFromType(type: Type): LlvmType {
     type.kind === 'array' ||
     type.kind === 'object' ||
     type.kind === 'reference' ||
+    type.kind === 'tuple' ||
     type.kind === 'unknown'
   ) {
     return 'ptr'
@@ -96,6 +97,7 @@ export function sizeOf(type: Type): number {
     type.kind === 'array' ||
     type.kind === 'object' ||
     type.kind === 'reference' ||
+    type.kind === 'tuple' ||
     type.kind === 'unknown'
   ) {
     return 8

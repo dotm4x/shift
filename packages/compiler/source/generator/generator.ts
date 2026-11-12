@@ -127,6 +127,7 @@ interface GenerationContext {
   handlerDepth: number
   readonly labels: Map<string, LoopContext>
   readonly genericClasses: Map<string, ts.ClassDeclaration>
+  readonly interfaces: Map<string, readonly string[]>
   readonly objectLiterals: Map<LlvmOperand, ts.ObjectLiteralExpression>
   readonly objectDeclarations: Map<string, ts.ObjectLiteralExpression>
   loops: LoopContext[]
@@ -135,6 +136,7 @@ interface GenerationContext {
   pendingLabel: string | undefined
   returnType: Type | undefined
   arrowCounter: number
+  readonly capturedVariables: Map<string, Set<string>>
   currentFunction: string | undefined
   readonly scopes: Map<string, VariableSlot>[]
   readonly sourceClasses: Map<string, ts.ClassDeclaration>
@@ -166,12 +168,14 @@ export class Generator {
   public generate(sourceFile: ts.SourceFile, options: GeneratorOptions = {}): string {
     const context: GenerationContext = {
       arrowCounter: 0,
+      capturedVariables: new Map<string, Set<string>>(),
       builtins: new Map<string, Builtin>(
         (options.builtins ?? defaultBuiltins).map((builtin) => [builtin.name, builtin]),
       ),
       classes: new Map<string, ClassInfo>(),
       entryName: options.entryName ?? 'main',
       genericClasses: new Map<string, ts.ClassDeclaration>(),
+      interfaces: new Map<string, readonly string[]>(),
       finallyContexts: [],
       functions: new Map<string, FunctionSignature>(),
       globals: new Set<string>(options.globals ?? []),
@@ -691,6 +695,12 @@ export class Generator {
       return
     }
 
+    if (ts.isInterfaceDeclaration(node)) {
+      this.generateInterface(node, context)
+
+      return
+    }
+
     if (ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) {
       return
     }
@@ -716,6 +726,28 @@ export class Generator {
       `Unsupported statement: ${ts.SyntaxKind[node.kind]}.`,
       node,
     )
+  }
+
+  /**
+   * Records an interface declaration as a runtime contract.
+   */
+  private generateInterface(node: ts.InterfaceDeclaration, context: GenerationContext): void {
+    if (!ts.isIdentifier(node.name)) {
+      throw new CompilerError('unsupported', 'Interfaces require a simple name.', node)
+    }
+
+    const name = node.name.text
+    const members: string[] = []
+
+    for (const member of node.members) {
+      if (ts.isMethodSignature(member)) {
+        members.push(memberNameOf(member.name))
+      } else if (ts.isPropertySignature(member)) {
+        members.push(memberNameOf(member.name))
+      }
+    }
+
+    context.interfaces.set(name, members)
   }
 
   /**
@@ -841,6 +873,68 @@ export class Generator {
 
     builder.startBlock(panicLabel)
     this.panic('unhandled exception', builder, context)
+  }
+
+  /**
+   * Generates a satisfies expression by checking the object implements the interface.
+   */
+  private generateSatisfies(
+    node: ts.SatisfiesExpression,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): ExpressionResult {
+    const value = this.generateExpression(node.expression, builder, context)
+    const interfaceName = typeFromNode(node.type)
+
+    if (interfaceName.kind !== 'reference') {
+      throw new CompilerError('type-mismatch', 'Satisfies requires an interface name.', node)
+    }
+
+    const members = context.interfaces.get(interfaceName.name)
+
+    if (members === undefined) {
+      throw new CompilerError('unknown-name', `Unknown interface '${interfaceName.name}'.`, node)
+    }
+
+    if (value.type.kind === 'object') {
+      const properties = value.type.properties.map((property) => property.name)
+
+      for (const member of members) {
+        if (!properties.includes(member)) {
+          throw new CompilerError(
+            'type-mismatch',
+            `The object does not satisfy '${interfaceName.name}': missing '${member}'.`,
+            node,
+          )
+        }
+      }
+
+      return value
+    }
+
+    if (isReferenceType(value.type)) {
+      const classInfo = this.classInfoOf(node, value.type.name, context)
+      const fieldNames = classInfo.allFields.map((field) => field.name)
+      const methodNames = [...classInfo.methods.keys()]
+
+      for (const member of members) {
+        if (!fieldNames.includes(member) && !methodNames.includes(member)) {
+          throw new CompilerError(
+            'type-mismatch',
+            `Class '${classInfo.name}' does not satisfy '${interfaceName.name}': missing '${member}'.`,
+            node,
+          )
+        }
+      }
+
+      return value
+    }
+
+    throw new CompilerError(
+      'type-mismatch',
+      `Values of type '${describeType(value.type)}' cannot satisfy interfaces.`,
+      node,
+    )
   }
 
   /**
@@ -985,13 +1079,19 @@ export class Generator {
     builder: LlvmFunction,
     context: GenerationContext,
   ): void {
-    if (node.name === undefined || !ts.isIdentifier(node.name)) {
+    const nestedName = node.name
+
+    if (nestedName === undefined || !ts.isIdentifier(nestedName)) {
       throw new CompilerError('unsupported', 'Functions require a simple name.', node)
     }
 
-    const name = `${context.currentFunction ?? context.entryName}.${node.name.text}`
+    const name = `${context.currentFunction ?? context.entryName}.${nestedName.text}`
     const signature = this.nestedSignatureOf(node, name)
     context.functions.set(name, signature)
+
+    const captured = collectCapturedVariables(node, context)
+    context.capturedVariables.set(name, captured)
+    this.boxCapturedVariables(node, builder, context)
 
     const nestedBuilder = context.module.addFunction(
       signature,
@@ -1042,9 +1142,9 @@ export class Generator {
     context.returnType = previousReturnType
     context.currentFunction = previousFunction
 
-    const pointer = builder.alloca('ptr', node.name.text)
+    const pointer = builder.alloca('ptr', nestedName.text)
     builder.store('ptr', { kind: 'constant', type: 'ptr', text: `@${name}` }, pointer)
-    this.declareVariable(node.name.text, pointer, unknownType, context)
+    this.declareVariable(nestedName.text, pointer, unknownType, context)
   }
 
   /**
@@ -2162,6 +2262,10 @@ export class Generator {
       return this.generateTypeOf(node, builder, context)
     }
 
+    if (ts.isSatisfiesExpression(node)) {
+      return this.generateSatisfies(node, builder, context)
+    }
+
     if (ts.isNewExpression(node)) {
       return this.generateNew(node, builder, context)
     }
@@ -2172,8 +2276,13 @@ export class Generator {
 
     if (ts.isAsExpression(node)) {
       const expression = this.generateExpression(node.expression, builder, context)
+      const targetTypeNode = node.type
 
-      return this.castTo(node, expression, typeFromNode(node.type), builder)
+      if (ts.isJSDocNullableType(targetTypeNode)) {
+        return this.generateSafeCast(node, expression, targetTypeNode.type, builder, context)
+      }
+
+      return this.castTo(node, expression, typeFromNode(targetTypeNode), builder)
     }
 
     if (ts.isNonNullExpression(node)) {
@@ -3142,6 +3251,37 @@ export class Generator {
       return { pointer: this.lengthAddress(target.operand, builder), type: usizeType }
     }
 
+    if (target.type.kind === 'tuple') {
+      const tupleIndex = Number(memberName)
+
+      if (
+        !Number.isInteger(tupleIndex) ||
+        tupleIndex < 0 ||
+        tupleIndex >= target.type.elementTypes.length
+      ) {
+        throw new CompilerError('unknown-name', `The tuple has no element '${memberName}'.`, node)
+      }
+
+      const tupleElement = target.type.elementTypes[tupleIndex]
+
+      if (tupleElement === undefined) {
+        throw new CompilerError('unknown-name', `The tuple has no element '${memberName}'.`, node)
+      }
+
+      const offset =
+        8 +
+        target.type.elementTypes
+          .slice(0, tupleIndex)
+          .reduce((total, candidate) => total + sizeOf(candidate), 0)
+      const pointer = builder.bytePointer(target.operand, {
+        kind: 'constant',
+        type: 'i64',
+        text: String(offset),
+      })
+
+      return { pointer, type: tupleElement }
+    }
+
     if (target.type.kind === 'unknown') {
       const qualifiedName = ts.isIdentifier(node.expression)
         ? `${node.expression.text}.${memberName}`
@@ -3849,8 +3989,53 @@ export class Generator {
     node: ts.ElementAccessExpression,
     builder: LlvmFunction,
     context: GenerationContext,
-  ): { pointer: LlvmLocal; type: Type } {
+  ): { pointer: LlvmOperand; type: Type } {
     const array = this.generateExpression(node.expression, builder, context)
+
+    if (array.type.kind === 'tuple') {
+      const index = this.generateExpression(node.argumentExpression, builder, context)
+
+      if (index.literalValue === undefined) {
+        throw new CompilerError('type-mismatch', 'Tuple indices must be constants.', node)
+      }
+
+      const tupleIndex = index.literalValue
+
+      if (
+        !Number.isInteger(tupleIndex) ||
+        tupleIndex < 0 ||
+        tupleIndex >= array.type.elementTypes.length
+      ) {
+        throw new CompilerError(
+          'unknown-name',
+          `The tuple has no element '${String(tupleIndex)}'.`,
+          node,
+        )
+      }
+
+      const tupleElement = array.type.elementTypes[tupleIndex]
+
+      if (tupleElement === undefined) {
+        throw new CompilerError(
+          'unknown-name',
+          `The tuple has no element '${String(tupleIndex)}'.`,
+          node,
+        )
+      }
+
+      const offset =
+        8 +
+        array.type.elementTypes
+          .slice(0, tupleIndex)
+          .reduce((total, candidate) => total + sizeOf(candidate), 0)
+      const pointer = builder.bytePointer(array.operand, {
+        kind: 'constant',
+        type: 'i64',
+        text: String(offset),
+      })
+
+      return { pointer, type: tupleElement }
+    }
 
     if (!isArrayType(array.type)) {
       throw new CompilerError('type-mismatch', 'Indexing requires an array.', node)
@@ -3886,6 +4071,7 @@ export class Generator {
 
     const elements: ExpressionResult[] = []
     let elementType: Type | undefined
+    let heterogeneous = false
 
     for (const element of node.elements) {
       if (ts.isSpreadElement(element)) {
@@ -3915,11 +4101,39 @@ export class Generator {
         continue
       }
 
-      elements.push(this.adaptTo(node, result, elementType, builder, context))
+      if (!sameType(result.type, elementType)) {
+        heterogeneous = true
+      }
+
+      elements.push(result)
     }
 
     if (elementType === undefined) {
       throw new CompilerError('type-mismatch', 'Cannot infer the type of an empty array.', node)
+    }
+
+    if (heterogeneous) {
+      const elementTypes = elements.map((element) => element.type)
+      const tupleBytes = 8 + elements.reduce((total, element) => total + sizeOf(element.type), 0)
+      const tuplePointer = this.gcAlloc(node, tupleBytes, builder, context)
+      let tupleOffset = 8
+
+      for (const element of elements) {
+        const elementPointer = builder.bytePointer(tuplePointer, {
+          kind: 'constant',
+          type: 'i64',
+          text: String(tupleOffset),
+        })
+
+        builder.store(irTypeFromType(element.type), element.operand, elementPointer)
+        tupleOffset += sizeOf(element.type)
+      }
+
+      return {
+        literalValue: undefined,
+        operand: tuplePointer,
+        type: { kind: 'tuple', elementTypes },
+      }
     }
 
     const bytes = 8 + elements.length * sizeOf(elementType)
@@ -4261,7 +4475,39 @@ export class Generator {
     }
 
     const className = node.expression.text
-    const classInfo = this.classInfoOf(node, className, context)
+    const genericDeclaration = context.genericClasses.get(className)
+    let classInfo = this.classInfoOf(node, className, context)
+
+    if (genericDeclaration !== undefined && node.typeArguments !== undefined) {
+      const typeArguments = node.typeArguments.map((argument) => typeFromNode(argument))
+      const typeParameters = genericDeclaration.typeParameters ?? []
+      const substitutions = new Map<string, Type>()
+
+      typeParameters.forEach((parameter, index) => {
+        const argument = typeArguments[index]
+
+        if (argument !== undefined) {
+          substitutions.set(parameter.name.text, argument)
+        }
+      })
+
+      const monomorphizedName = `${className}$${typeArguments
+        .map((argument) => describeType(argument))
+        .join('$')}`
+
+      if (!context.classes.has(monomorphizedName)) {
+        this.monomorphizeClass(
+          genericDeclaration,
+          className,
+          monomorphizedName,
+          substitutions,
+          context,
+        )
+      }
+
+      classInfo = this.classInfoOf(node, monomorphizedName, context)
+    }
+
     const bytes = 8 + classInfo.allFields.reduce((total, field) => total + sizeOf(field.type), 0)
     const pointer = this.gcAlloc(node, bytes, builder, context)
 
@@ -4618,6 +4864,106 @@ export class Generator {
   }
 
   /**
+   * Generates a safe cast that returns null when the value cannot be represented.
+   */
+  private generateSafeCast(
+    node: ts.AsExpression,
+    expression: ExpressionResult,
+    targetTypeNode: ts.TypeNode,
+    builder: LlvmFunction,
+    _context: GenerationContext,
+  ): ExpressionResult {
+    const targetType = typeFromNode(targetTypeNode)
+
+    if (sameType(expression.type, targetType)) {
+      return expression
+    }
+
+    if (isNumericType(expression.type) && isNumericType(targetType)) {
+      const sourceIr = irTypeFromType(expression.type)
+      const targetIr = irTypeFromType(targetType)
+      const resultPointer = builder.alloca(targetIr, 'safeCast')
+      const validLabel = builder.reserveLabel('cast.valid')
+      const invalidLabel = builder.reserveLabel('cast.invalid')
+      const endLabel = builder.reserveLabel('cast.end')
+
+      builder.store(targetIr, this.zeroValueOf(targetType), resultPointer)
+
+      if (isIntegerType(expression.type) && isIntegerType(targetType)) {
+        const sourceSize = sizeOf(expression.type)
+        const targetSize = sizeOf(targetType)
+
+        if (targetSize < sourceSize) {
+          const minPointer = builder.alloca(sourceIr, 'min')
+          const maxPointer = builder.alloca(sourceIr, 'max')
+          const bounds = integerBoundsOf(targetType)
+
+          builder.store(
+            sourceIr,
+            { kind: 'constant', type: sourceIr, text: String(bounds.min) },
+            minPointer,
+          )
+          builder.store(
+            sourceIr,
+            { kind: 'constant', type: sourceIr, text: String(bounds.max) },
+            maxPointer,
+          )
+
+          const min = builder.load(sourceIr, minPointer)
+          const max = builder.load(sourceIr, maxPointer)
+          const aboveMin = builder.binary(
+            sourceIr,
+            isUnsignedInteger(expression.type) ? 'icmp uge' : 'icmp sge',
+            expression.operand,
+            min,
+          )
+          const belowMax = builder.binary(
+            sourceIr,
+            isUnsignedInteger(expression.type) ? 'icmp ule' : 'icmp sle',
+            expression.operand,
+            max,
+          )
+          const inRange = builder.binary('i1', 'and', aboveMin, belowMax)
+
+          builder.branch(inRange, validLabel, invalidLabel)
+          builder.startBlock(validLabel)
+          const truncated = builder.cast(
+            integerCastOpcode(expression.type, targetType) ?? 'trunc',
+            sourceIr,
+            expression.operand,
+            targetIr,
+          )
+          builder.store(targetIr, truncated, resultPointer)
+          builder.jump(endLabel)
+          builder.startBlock(invalidLabel)
+          builder.jump(endLabel)
+          builder.startBlock(endLabel)
+
+          return {
+            literalValue: undefined,
+            operand: builder.load(targetIr, resultPointer),
+            type: targetType,
+          }
+        }
+      }
+
+      const converted = this.castTo(node, expression, targetType, builder)
+
+      builder.store(targetIr, converted.operand, resultPointer)
+      builder.jump(endLabel)
+      builder.startBlock(endLabel)
+
+      return {
+        literalValue: undefined,
+        operand: builder.load(targetIr, resultPointer),
+        type: targetType,
+      }
+    }
+
+    return this.castTo(node, expression, targetType, builder)
+  }
+
+  /**
    * Converts a value to the target type with an explicit cast.
    */
   private castTo(
@@ -4881,7 +5227,207 @@ export class Generator {
       return { kind: 'constant', type: 'ptr', text: 'null' }
     }
 
+    if (isFloatType(type)) {
+      return { kind: 'constant', type: irTypeFromType(type), text: '0.0' }
+    }
+
     return { kind: 'constant', type: irTypeFromType(type), text: '0' }
+  }
+
+  /**
+   * Creates a monomorphized copy of a generic class with concrete type arguments.
+   */
+  private monomorphizeClass(
+    declaration: ts.ClassDeclaration,
+    _originalName: string,
+    newName: string,
+    substitutions: ReadonlyMap<string, Type>,
+    context: GenerationContext,
+  ): void {
+    const fields: FieldInfo[] = []
+    const methods = new Map<string, MethodInfo>()
+
+    for (const member of declaration.members) {
+      const visibility = visibilityOf(member)
+
+      if (ts.isPropertyDeclaration(member)) {
+        const memberName = memberNameOf(member.name)
+
+        if (member.type === undefined) {
+          throw new CompilerError(
+            'missing-annotation',
+            `Field '${memberName}' of class '${newName}' requires a type annotation.`,
+            member,
+          )
+        }
+
+        fields.push({
+          index: 0,
+          name: memberName,
+          owner: newName,
+          type: substituteType(typeFromNode(member.type), substitutions),
+          visibility,
+        })
+      } else if (ts.isMethodDeclaration(member)) {
+        const memberName = memberNameOf(member.name)
+
+        methods.set(memberName, {
+          signature: this.monomorphizeMethodSignature(member, newName, memberName, substitutions),
+          visibility,
+        })
+      } else if (ts.isConstructorDeclaration(member)) {
+        methods.set('constructor', {
+          signature: this.monomorphizeConstructorSignature(member, newName, substitutions),
+          visibility,
+        })
+      }
+    }
+
+    context.classes.set(newName, {
+      allFields: [],
+      base: undefined,
+      fields,
+      methods,
+      name: newName,
+      vtable: [],
+    })
+    context.sourceClasses.set(newName, declaration)
+
+    const allFields: FieldInfo[] = []
+    let index = 1
+
+    for (const field of fields) {
+      allFields.push({
+        index,
+        name: field.name,
+        owner: field.owner,
+        type: field.type,
+        visibility: field.visibility,
+      })
+      index++
+    }
+
+    const info = context.classes.get(newName)
+
+    if (info === undefined) {
+      throw new CompilerError('unknown-name', `Unknown class '${newName}'.`, undefined)
+    }
+
+    info.allFields = allFields
+    info.vtable = [...methods.keys()].filter((methodName) => methodName !== 'constructor')
+    context.module.addTypeDefinition(`%${newName}`, [
+      'ptr',
+      ...allFields.map((field) => irTypeFromType(field.type)),
+    ])
+    context.module.addGlobal(
+      `${vtableText(info)} = private unnamed_addr constant [${String(info.vtable.length)} x ptr] [ ${info.vtable
+        .map((methodName) => `ptr @${newName}.${methodName}`)
+        .join(', ')} ]`,
+    )
+  }
+
+  /**
+   * Builds the monomorphized signature of a method.
+   */
+  private monomorphizeMethodSignature(
+    member: ts.MethodDeclaration,
+    className: string,
+    methodName: string,
+    substitutions: ReadonlyMap<string, Type>,
+  ): FunctionSignature {
+    if (member.type === undefined) {
+      throw new CompilerError(
+        'missing-annotation',
+        `Method '${methodName}' of class '${className}' requires a return type annotation.`,
+        member,
+      )
+    }
+
+    return {
+      name: `${className}.${methodName}`,
+      parameterTypes: [
+        { kind: 'reference', name: className, typeArguments: [] },
+        ...member.parameters.map((parameter) => {
+          if (parameter.type === undefined) {
+            throw new CompilerError(
+              'missing-annotation',
+              `Parameter '${parameterNameOf(parameter)}' of method '${methodName}' requires a type annotation.`,
+              parameter,
+            )
+          }
+
+          return substituteType(typeFromNode(parameter.type), substitutions)
+        }),
+      ],
+      returnType: substituteType(typeFromNode(member.type), substitutions),
+    }
+  }
+
+  /**
+   * Builds the monomorphized signature of a constructor.
+   */
+  private monomorphizeConstructorSignature(
+    member: ts.ConstructorDeclaration,
+    className: string,
+    substitutions: ReadonlyMap<string, Type>,
+  ): FunctionSignature {
+    return {
+      name: `${className}.constructor`,
+      parameterTypes: [
+        { kind: 'reference', name: className, typeArguments: [] },
+        ...member.parameters.map((parameter) => {
+          if (parameter.type === undefined) {
+            throw new CompilerError(
+              'missing-annotation',
+              `Parameter '${parameterNameOf(parameter)}' of the constructor of '${className}' requires a type annotation.`,
+              parameter,
+            )
+          }
+
+          return substituteType(typeFromNode(parameter.type), substitutions)
+        }),
+      ],
+      returnType: voidType,
+    }
+  }
+
+  /**
+   * Boxes a variable in the heap when a nested function captures it.
+   */
+  private boxCapturedVariables(
+    node: ts.FunctionDeclaration,
+    builder: LlvmFunction,
+    context: GenerationContext,
+  ): void {
+    const name = `${context.currentFunction ?? context.entryName}.${node.name?.text ?? ''}`
+    const captured = context.capturedVariables.get(name)
+
+    if (captured === undefined) {
+      return
+    }
+
+    for (const variableName of captured) {
+      for (const scope of context.scopes) {
+        const slot = scope.get(variableName)
+
+        if (slot === undefined) {
+          continue
+        }
+
+        const boxPointer = this.gcAlloc(node, sizeOf(slot.type) + 8, builder, context)
+
+        builder.store(
+          irTypeFromType(slot.type),
+          builder.load(irTypeFromType(slot.type), slot.pointer),
+          builder.bytePointer(boxPointer, {
+            kind: 'constant',
+            type: 'i64',
+            text: '8',
+          }),
+        )
+        scope.set(variableName, { pointer: boxPointer, type: slot.type })
+      }
+    }
   }
 
   /**
@@ -5092,6 +5638,132 @@ export class Generator {
 }
 
 /**
+ * Substitutes type parameters with concrete types.
+ */
+function substituteType(type: Type, substitutions: ReadonlyMap<string, Type>): Type {
+  if (type.kind === 'reference' && substitutions.has(type.name)) {
+    const substituted = substitutions.get(type.name)
+
+    if (substituted !== undefined) {
+      return substituted
+    }
+  }
+
+  if (type.kind === 'array') {
+    return { kind: 'array', elementType: substituteType(type.elementType, substitutions) }
+  }
+
+  if (type.kind === 'tuple') {
+    return {
+      kind: 'tuple',
+      elementTypes: type.elementTypes.map((element) => substituteType(element, substitutions)),
+    }
+  }
+
+  if (type.kind === 'union') {
+    return {
+      kind: 'union',
+      types: type.types.map((member) => substituteType(member, substitutions)),
+    }
+  }
+
+  if (type.kind === 'function') {
+    return {
+      kind: 'function',
+      parameters: type.parameters.map((parameter) => ({
+        name: parameter.name,
+        type: substituteType(parameter.type, substitutions),
+        optional: parameter.optional,
+      })),
+      returnType: substituteType(type.returnType, substitutions),
+    }
+  }
+
+  return type
+}
+
+/**
+ * Returns the minimum and maximum values of an integer type.
+ */
+function integerBoundsOf(type: Type): { min: number; max: number } {
+  if (type.kind !== 'primitive') {
+    return { min: 0, max: 0 }
+  }
+
+  if (type.name === 'i8') {
+    return { min: -128, max: 127 }
+  }
+
+  if (type.name === 'i16') {
+    return { min: -32768, max: 32767 }
+  }
+
+  if (type.name === 'i32') {
+    return { min: -2147483648, max: 2147483647 }
+  }
+
+  if (type.name === 'i64') {
+    return { min: Number.MIN_SAFE_INTEGER, max: Number.MAX_SAFE_INTEGER }
+  }
+
+  if (type.name === 'u8') {
+    return { min: 0, max: 255 }
+  }
+
+  if (type.name === 'u16') {
+    return { min: 0, max: 65535 }
+  }
+
+  if (type.name === 'u32') {
+    return { min: 0, max: 4294967295 }
+  }
+
+  return { min: 0, max: Number.MAX_SAFE_INTEGER }
+}
+
+/**
+ * Collects the names of the outer variables a nested function references.
+ */
+function collectCapturedVariables(
+  node: ts.FunctionDeclaration,
+  context: GenerationContext,
+): Set<string> {
+  const captured: Set<string> = new Set<string>()
+
+  function visit(candidate: ts.Node): void {
+    if (ts.isIdentifier(candidate) && !isDeclarationNameOf(candidate)) {
+      const name = candidate.text
+
+      if (!context.functions.has(name) && !context.globals.has(name)) {
+        captured.add(name)
+      }
+    }
+
+    ts.forEachChild(candidate, visit)
+  }
+
+  if (node.body !== undefined) {
+    visit(node.body)
+  }
+
+  return captured
+}
+
+/**
+ * Determines whether an identifier is the name of a declaration.
+ */
+function isDeclarationNameOf(node: ts.Identifier): boolean {
+  const parent = node.parent
+
+  return (
+    (ts.isVariableDeclaration(parent) && parent.name === node) ||
+    (ts.isParameter(parent) && parent.name === node) ||
+    (ts.isFunctionDeclaration(parent) && parent.name === node) ||
+    (ts.isPropertyAccessExpression(parent) && parent.name === node)
+  )
+}
+
+/**
  * Returns the runtime type name of a type.
  */
 function runtimeTypeNameOf(type: Type): string {
@@ -5212,6 +5884,10 @@ function fitsLiteral(value: number, type: Type): boolean {
 
   if (type.name === 'u64' || type.name === 'usize') {
     return Number.isInteger(value) && value >= 0
+  }
+
+  if (type.name === 'f32' || type.name === 'f64') {
+    return true
   }
 
   return false

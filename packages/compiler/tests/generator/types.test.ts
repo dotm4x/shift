@@ -53,10 +53,8 @@ describe('irTypeFromType', () => {
     expect(irTypeFromType(stringType)).toBe('ptr')
   })
 
-  it('throws for unsupported language types', () => {
-    expect(() => irTypeFromType({ kind: 'tuple', elementTypes: [i32Type] })).toThrow(
-      'Unsupported type for code generation',
-    )
+  it('maps tuples to pointers', () => {
+    expect(irTypeFromType({ kind: 'tuple', elementTypes: [i32Type] })).toBe('ptr')
   })
 })
 

@@ -459,7 +459,13 @@ describe('Generator', () => {
     expect(() => generate('let x: i32 = "hi"')).toThrow('Cannot assign')
   })
 
-  it('rejects unsupported expressions', () => {
-    expect(() => generate('let v = [1, 2.5]')).toThrow('does not fit')
+  it('generates tuple literals with element access', () => {
+    const source = ['let pair = [1, "hi"]', 'let number = pair.0', 'let text = pair.1'].join('\n')
+
+    const ir = generate(source)
+
+    expect(ir).toContain('call ptr @GC_malloc(i64 20)')
+    expect(ir).toContain('store i32 1, ptr')
+    expect(ir).toContain('store ptr %t')
   })
 })
