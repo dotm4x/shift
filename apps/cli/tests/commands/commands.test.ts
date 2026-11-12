@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { buildCommand } from '../../source/commands/build.js'
 import { runCommand } from '../../source/commands/run.js'
+import { scriptCommand } from '../../source/commands/script.js'
 
 describe('buildCommand', () => {
   it('registers the build command with an output option', () => {
@@ -15,5 +16,11 @@ describe('buildCommand', () => {
 describe('runCommand', () => {
   it('registers the run command', () => {
     expect(runCommand().name()).toBe('run')
+  })
+})
+
+describe('scriptCommand', () => {
+  it('registers the script command', () => {
+    expect(scriptCommand().name()).toBe('script')
   })
 })

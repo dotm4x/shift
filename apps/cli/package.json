@@ -18,7 +18,9 @@
   },
   "dependencies": {
     "@livescript/compiler": "workspace:*",
-    "commander": "^15.0.0"
+    "@livescript/project": "workspace:*",
+    "commander": "^15.0.0",
+    "typescript": "^6.0.3"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
