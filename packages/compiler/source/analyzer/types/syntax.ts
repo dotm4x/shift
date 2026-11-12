@@ -1,24 +1,27 @@
 import * as ts from 'typescript'
 
+import type {
+  ConditionalType,
+  FunctionParameter,
+  FunctionType,
+  GenericParameter,
+  MappedType,
+  ObjectType,
+  PrimitiveName,
+  TemplateLiteralType,
+  TupleType,
+  Type,
+  TypeProperty,
+} from './type.js'
 import {
-  bigintType,
   booleanType,
-  type ConditionalType,
-  type FunctionParameter,
-  type FunctionType,
-  type GenericParameter,
-  type MappedType,
+  f64Type,
+  i32Type,
+  i64Type,
   neverType,
   nullType,
-  numberType,
-  objectType,
-  type ObjectType,
-  type ReferenceType,
+  numericTypeNames,
   stringType,
-  type TemplateLiteralType,
-  type TupleType,
-  type Type,
-  type TypeProperty,
   undefinedType,
   uniqueSymbolType,
   unknownType,
@@ -28,16 +31,20 @@ import {
 /** Types of the type keywords recognized by the language. */
 const keywordTypes: { [kind in ts.SyntaxKind]?: Type } = {
   [ts.SyntaxKind.AnyKeyword]: unknownType,
-  [ts.SyntaxKind.BigIntKeyword]: bigintType,
   [ts.SyntaxKind.BooleanKeyword]: booleanType,
   [ts.SyntaxKind.NeverKeyword]: neverType,
   [ts.SyntaxKind.NullKeyword]: nullType,
-  [ts.SyntaxKind.NumberKeyword]: numberType,
-  [ts.SyntaxKind.ObjectKeyword]: objectType,
   [ts.SyntaxKind.StringKeyword]: stringType,
   [ts.SyntaxKind.UndefinedKeyword]: undefinedType,
   [ts.SyntaxKind.UnknownKeyword]: unknownType,
   [ts.SyntaxKind.VoidKeyword]: voidType,
+}
+
+/** Keywords that used to be types and were replaced by the numeric zoo. */
+const removedKeywords: { [kind in ts.SyntaxKind]?: string } = {
+  [ts.SyntaxKind.BigIntKeyword]: 'bigint',
+  [ts.SyntaxKind.NumberKeyword]: 'i32 or f64',
+  [ts.SyntaxKind.ObjectKeyword]: 'a class or an object type',
 }
 
 /**
@@ -52,6 +59,12 @@ export function typeFromNode(node: ts.TypeNode): Type {
 
   if (keywordType !== undefined) {
     return keywordType
+  }
+
+  const removed = removedKeywords[node.kind]
+
+  if (removed !== undefined) {
+    throw new Error(`The '${ts.SyntaxKind[node.kind]}' type was removed. Use ${removed} instead.`)
   }
 
   if (ts.isLiteralTypeNode(node)) {
@@ -75,7 +88,7 @@ export function typeFromNode(node: ts.TypeNode): Type {
   }
 
   if (ts.isIntersectionTypeNode(node)) {
-    return { kind: 'intersection', types: node.types.map((member) => typeFromNode(member)) }
+    return typeFromIntersection(node)
   }
 
   if (ts.isFunctionTypeNode(node)) {
@@ -120,7 +133,7 @@ function typeFromLiteral(node: ts.LiteralTypeNode): Type {
   }
 
   if (ts.isNumericLiteral(literal)) {
-    return { kind: 'literal', primitive: 'number', value: Number(literal.text) }
+    return numericLiteralType(Number(literal.text))
   }
 
   if (literal.kind === ts.SyntaxKind.TrueKeyword) {
@@ -136,6 +149,33 @@ function typeFromLiteral(node: ts.LiteralTypeNode): Type {
   }
 
   throw new Error(`Unsupported literal type: ${ts.SyntaxKind[literal.kind]}.`)
+}
+
+/**
+ * Converts an intersection type node into its type. A single-member intersection is the syntax the
+ * parser produces for `&T`, which has no meaning in the language.
+ */
+function typeFromIntersection(node: ts.IntersectionTypeNode): Type {
+  if (node.types.length === 1) {
+    throw new Error('Reference types are not supported.')
+  }
+
+  return { kind: 'intersection', types: node.types.map((member) => typeFromNode(member)) }
+}
+
+/**
+ * Types an integer literal, widening it when it does not fit in i32.
+ */
+function numericLiteralType(value: number): Type {
+  if (!Number.isInteger(value)) {
+    return f64Type
+  }
+
+  if (value < -2147483648 || value > 2147483647) {
+    return i64Type
+  }
+
+  return i32Type
 }
 
 /**
@@ -323,14 +363,20 @@ function typeFromOperator(node: ts.TypeOperatorNode): Type {
 /**
  * Converts a type reference node into its type.
  */
-function typeFromReference(node: ts.TypeReferenceNode): ReferenceType {
+function typeFromReference(node: ts.TypeReferenceNode): Type {
   if (!ts.isIdentifier(node.typeName)) {
     throw new Error('Type references require a simple name.')
   }
 
+  const name = node.typeName.text
+
+  if (numericTypeNames.has(name)) {
+    return { kind: 'primitive', name: name as PrimitiveName }
+  }
+
   return {
     kind: 'reference',
-    name: node.typeName.text,
+    name,
     typeArguments: (node.typeArguments ?? []).map((argument) => typeFromNode(argument)),
   }
 }

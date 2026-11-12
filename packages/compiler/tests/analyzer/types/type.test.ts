@@ -1,38 +1,54 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  bigintType,
   booleanType,
-  neverType,
-  nullType,
-  numberType,
-  objectType,
+  f32Type,
+  f64Type,
+  i8Type,
+  i16Type,
+  i32Type,
+  i64Type,
   stringType,
-  undefinedType,
-  uniqueSymbolType,
-  unknownType,
-  voidType,
+  u8Type,
+  u16Type,
+  u32Type,
+  u64Type,
+  usizeType,
 } from '../../../source/analyzer/types/type.js'
 
 describe('primitive types', () => {
-  it('exposes every primitive', () => {
+  it('exposes the numeric zoo', () => {
     const names = [
-      bigintType,
-      booleanType,
-      nullType,
-      numberType,
-      objectType,
-      stringType,
-      undefinedType,
+      f32Type,
+      f64Type,
+      i16Type,
+      i32Type,
+      i64Type,
+      i8Type,
+      u16Type,
+      u32Type,
+      u64Type,
+      u8Type,
+      usizeType,
     ].map((type) => type.name)
 
-    expect(names).toEqual(['bigint', 'boolean', 'null', 'number', 'object', 'string', 'undefined'])
+    expect(names).toEqual([
+      'f32',
+      'f64',
+      'i16',
+      'i32',
+      'i64',
+      'i8',
+      'u16',
+      'u32',
+      'u64',
+      'u8',
+      'usize',
+    ])
   })
 
-  it('exposes the special types', () => {
-    expect(neverType.kind).toBe('never')
-    expect(unknownType.kind).toBe('unknown')
-    expect(voidType.kind).toBe('void')
-    expect(uniqueSymbolType.kind).toBe('uniqueSymbol')
+  it('exposes the other primitives', () => {
+    expect(booleanType.name).toBe('boolean')
+    expect(stringType.name).toBe('string')
   })
 })

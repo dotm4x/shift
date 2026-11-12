@@ -6,6 +6,7 @@ import type { SourceRange } from '../shared/position.js'
 
 import { Scope, type ScopeKind } from './scope.js'
 import { Symbol } from './symbol.js'
+import { builtinTypeNames } from './types/type.js'
 
 /** Options that configure an analyzer. */
 export interface AnalyzerOptions {
@@ -141,6 +142,12 @@ export class Analyzer {
       return
     }
 
+    if (node.kind === ts.SyntaxKind.ThisKeyword) {
+      this.declareSymbol(current, new Symbol('this', 'this', undefined, false), context)
+
+      return
+    }
+
     if (ts.isTypeAliasDeclaration(node)) {
       this.declareSymbol(enclosing, new Symbol(node.name.text, 'type', node, true), context)
 
@@ -219,7 +226,7 @@ export class Analyzer {
       const symbol = scope.resolve(identifier.text)
 
       if (symbol === undefined || !isTypeSymbol(symbol)) {
-        if (!context.globals.has(identifier.text)) {
+        if (!context.globals.has(identifier.text) && !builtinTypeNames.has(identifier.text)) {
           context.diagnostics.add({
             code: 'no-undeclared-type',
             message: `Type '${identifier.text}' is not declared.`,
@@ -241,7 +248,12 @@ export class Analyzer {
   private reportUnusedSymbols(context: CollectionContext): void {
     for (const scope of context.scopes) {
       for (const symbol of scope.symbols) {
-        if (symbol.used || symbol.declaration === undefined || context.builtins.has(symbol.name)) {
+        if (
+          symbol.used ||
+          symbol.declaration === undefined ||
+          symbol.kind === 'this' ||
+          context.builtins.has(symbol.name)
+        ) {
           continue
         }
 

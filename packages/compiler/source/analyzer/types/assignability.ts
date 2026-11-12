@@ -1,3 +1,4 @@
+import { numericTypeNames } from './type.js'
 import type {
   FunctionType,
   LiteralType,
@@ -50,10 +51,6 @@ export function isAssignableTo(source: Type, target: Type): boolean {
     return source.kind === 'void' || (source.kind === 'primitive' && source.name === 'undefined')
   }
 
-  if (target.kind === 'primitive' && target.name === 'object') {
-    return isNonPrimitiveValue(source)
-  }
-
   if (source.kind === 'literal') {
     return isLiteralAssignableTo(source, target)
   }
@@ -103,24 +100,6 @@ export function isAssignableTo(source: Type, target: Type): boolean {
   }
 
   return false
-}
-
-/**
- * Determines whether the source type describes a value that is not a primitive.
- */
-function isNonPrimitiveValue(source: Type): boolean {
-  if (source.kind === 'primitive') {
-    return source.name === 'object'
-  }
-
-  return (
-    source.kind === 'array' ||
-    source.kind === 'tuple' ||
-    source.kind === 'object' ||
-    source.kind === 'function' ||
-    source.kind === 'enum' ||
-    source.kind === 'reference'
-  )
 }
 
 /**
@@ -309,7 +288,7 @@ function matchesPlaceholder(
     return splitEvery(value, rest)
   }
 
-  if (placeholder.kind === 'primitive' && placeholder.name === 'number') {
+  if (placeholder.kind === 'primitive' && numericTypeNames.has(placeholder.name)) {
     return splitNumeric(value, rest)
   }
 

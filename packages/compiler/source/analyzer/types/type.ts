@@ -1,6 +1,7 @@
 /** Kind of a Livescript type. */
 export type TypeKind =
   | 'array'
+  | 'boolean'
   | 'conditional'
   | 'enum'
   | 'function'
@@ -8,11 +9,13 @@ export type TypeKind =
   | 'literal'
   | 'mapped'
   | 'never'
+  | 'null'
   | 'object'
   | 'primitive'
   | 'reference'
   | 'templateLiteral'
   | 'tuple'
+  | 'undefined'
   | 'union'
   | 'uniqueSymbol'
   | 'unknown'
@@ -20,9 +23,23 @@ export type TypeKind =
 
 /** Name of a primitive type. */
 export type PrimitiveName =
-  'bigint' | 'boolean' | 'null' | 'number' | 'object' | 'string' | 'undefined'
+  | 'boolean'
+  | 'f32'
+  | 'f64'
+  | 'i16'
+  | 'i32'
+  | 'i64'
+  | 'i8'
+  | 'null'
+  | 'string'
+  | 'u16'
+  | 'u32'
+  | 'u64'
+  | 'u8'
+  | 'undefined'
+  | 'usize'
 
-/** A primitive type, such as `number` or `string`. */
+/** A primitive type, such as `i32` or `f64`. */
 export interface PrimitiveType {
   readonly kind: 'primitive'
   readonly name: PrimitiveName
@@ -31,7 +48,7 @@ export interface PrimitiveType {
 /** A type that holds a single literal value, such as `"hi"` or `42`. */
 export interface LiteralType {
   readonly kind: 'literal'
-  readonly primitive: 'boolean' | 'number' | 'string'
+  readonly primitive: 'boolean' | 'f64' | 'i32' | 'i64' | 'string'
   readonly value: string | number | boolean
 }
 
@@ -39,12 +56,6 @@ export interface LiteralType {
 export interface ArrayType {
   readonly kind: 'array'
   readonly elementType: Type
-}
-
-/** A tuple type with a fixed list of element types. */
-export interface TupleType {
-  readonly kind: 'tuple'
-  readonly elementTypes: readonly Type[]
 }
 
 /** A property of an object type. */
@@ -174,26 +185,56 @@ export type Type =
   | UnknownType
   | VoidType
 
-/** The `bigint` primitive type. */
-export const bigintType: PrimitiveType = { kind: 'primitive', name: 'bigint' }
+/** A tuple type with a fixed list of element types. */
+export interface TupleType {
+  readonly kind: 'tuple'
+  readonly elementTypes: readonly Type[]
+}
 
 /** The `boolean` primitive type. */
 export const booleanType: PrimitiveType = { kind: 'primitive', name: 'boolean' }
 
-/** The `null` primitive type. */
-export const nullType: PrimitiveType = { kind: 'primitive', name: 'null' }
-
-/** The `number` primitive type. */
-export const numberType: PrimitiveType = { kind: 'primitive', name: 'number' }
-
-/** The `object` type; every non-primitive value is assignable to it. */
-export const objectType: PrimitiveType = { kind: 'primitive', name: 'object' }
-
 /** The `string` primitive type. */
 export const stringType: PrimitiveType = { kind: 'primitive', name: 'string' }
 
+/** The `null` primitive type. */
+export const nullType: PrimitiveType = { kind: 'primitive', name: 'null' }
+
 /** The `undefined` primitive type. */
 export const undefinedType: PrimitiveType = { kind: 'primitive', name: 'undefined' }
+
+/** The `f32` type. */
+export const f32Type: PrimitiveType = { kind: 'primitive', name: 'f32' }
+
+/** The `f64` type. */
+export const f64Type: PrimitiveType = { kind: 'primitive', name: 'f64' }
+
+/** The `i16` type. */
+export const i16Type: PrimitiveType = { kind: 'primitive', name: 'i16' }
+
+/** The `i32` type. */
+export const i32Type: PrimitiveType = { kind: 'primitive', name: 'i32' }
+
+/** The `i64` type. */
+export const i64Type: PrimitiveType = { kind: 'primitive', name: 'i64' }
+
+/** The `i8` type. */
+export const i8Type: PrimitiveType = { kind: 'primitive', name: 'i8' }
+
+/** The `u16` type. */
+export const u16Type: PrimitiveType = { kind: 'primitive', name: 'u16' }
+
+/** The `u32` type. */
+export const u32Type: PrimitiveType = { kind: 'primitive', name: 'u32' }
+
+/** The `u64` type. */
+export const u64Type: PrimitiveType = { kind: 'primitive', name: 'u64' }
+
+/** The `u8` type. */
+export const u8Type: PrimitiveType = { kind: 'primitive', name: 'u8' }
+
+/** The `usize` type. */
+export const usizeType: PrimitiveType = { kind: 'primitive', name: 'usize' }
 
 /** The `never` type. */
 export const neverType: NeverType = { kind: 'never' }
@@ -206,3 +247,25 @@ export const voidType: VoidType = { kind: 'void' }
 
 /** The `unique symbol` type. */
 export const uniqueSymbolType: UniqueSymbolType = { kind: 'uniqueSymbol' }
+
+/** Names of the numeric types recognized by the language. */
+export const numericTypeNames: ReadonlySet<string> = new Set<string>([
+  'f32',
+  'f64',
+  'i16',
+  'i32',
+  'i64',
+  'i8',
+  'u16',
+  'u32',
+  'u64',
+  'u8',
+  'usize',
+])
+
+/** Names of every type recognized without a declaration. */
+export const builtinTypeNames: ReadonlySet<string> = new Set<string>([
+  ...numericTypeNames,
+  'boolean',
+  'string',
+])

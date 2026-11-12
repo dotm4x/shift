@@ -2,7 +2,15 @@ import type * as ts from 'typescript'
 
 /** Kind of a declared symbol. */
 export type SymbolKind =
-  'class' | 'enum' | 'function' | 'interface' | 'parameter' | 'type' | 'typeParameter' | 'variable'
+  | 'class'
+  | 'enum'
+  | 'function'
+  | 'interface'
+  | 'parameter'
+  | 'this'
+  | 'type'
+  | 'typeParameter'
+  | 'variable'
 
 /**
  * A named declaration tracked by the analyzer.
